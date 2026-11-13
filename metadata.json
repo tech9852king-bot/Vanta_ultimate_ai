@@ -1,0 +1,8 @@
+{
+  "name": "VANTA AI — Universal Infrastructure Intelligence OS",
+  "description": "Unified enterprise industrial and infrastructure intelligence operating system connecting physical assets, vision systems, IoT telemetry, Digital Twins, predictive maintenance, energy intelligence, and evidence-backed multi-agent operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
