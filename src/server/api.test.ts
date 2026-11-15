@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
-import { initDatabase } from './db';
-import { createApiRouter } from './routes';
+import { initDatabase } from './db.ts';
+import { createApiRouter } from './routes.ts';
 
 function startTestServer() {
   const db = initDatabase(':memory:');

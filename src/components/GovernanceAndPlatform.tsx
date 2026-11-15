@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Check, X, FilePlus } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Check, X, FilePlus, RefreshCw, Database, ShieldOff } from 'lucide-react';
 import { vantaApi } from '../api/client';
+import { canPerformAction } from '../core/intelligence';
 import type { CapabilityState, UserSession } from '../core/types';
-import type { SystemHealthStatus, WorkspaceData } from '../types/workspace';
+import type { BackupMetadataDto, SystemHealthStatus, WorkspaceData } from '../types/workspace';
 import { ModuleHeader, StatusText } from './StatusText';
 
 export function OperationsWorkflowsView({
@@ -20,10 +21,14 @@ export function OperationsWorkflowsView({
   const [description, setDescription] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  const effectiveAssetId = data.assets.some((a) => a.id === assetId)
+    ? assetId
+    : data.assets[0]?.id || '';
+
   const handleCreateWorkOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
-    const asset = data.assets.find((a) => a.id === assetId);
+    const asset = data.assets.find((a) => a.id === effectiveAssetId);
     if (!asset) return;
     try {
       await vantaApi.createWorkOrder({
@@ -61,7 +66,7 @@ export function OperationsWorkflowsView({
     <div className="space-y-6">
       <ModuleHeader
         title="Operations, Work Orders & Human Approvals"
-        subtitle="Consequential operational recommendations and maintenance isolations require explicit RBAC-authorized human approval."
+        subtitle="Consequential operational recommendations and maintenance isolations require explicit RBAC and facility-authorized human approval."
         capability="FUNCTIONAL"
       />
 
@@ -130,7 +135,7 @@ export function OperationsWorkflowsView({
             <label htmlFor="wo-asset" className="block text-xs text-slate-400 mb-1">Target Asset</label>
             <select
               id="wo-asset"
-              value={assetId}
+              value={effectiveAssetId}
               onChange={(e) => setAssetId(e.target.value)}
               className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
             >
@@ -221,6 +226,7 @@ export function KnowledgeCenterView({
 }) {
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [facilityId, setFacilityId] = useState(data.facilities[0]?.id || '');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('SOP');
   const [minRole, setMinRole] = useState('Viewer');
@@ -239,7 +245,7 @@ export function KnowledgeCenterView({
     setError(null);
     try {
       await vantaApi.createKnowledgeDoc({
-        facilityId: data.facilities[0]?.id || '',
+        facilityId,
         title,
         category,
         minRole,
@@ -260,7 +266,7 @@ export function KnowledgeCenterView({
     <div className="space-y-6">
       <ModuleHeader
         title="Knowledge Center & Technical Specifications"
-        subtitle="Permission-aware, tenant-isolated repository for equipment manuals, SOPs, safety interlock specifications, and postmortems."
+        subtitle="Permission-aware, facility-scoped, and tenant-isolated repository for equipment manuals, SOPs, safety interlock specifications, and postmortems."
         capability="FUNCTIONAL"
         actions={
           <button
@@ -277,16 +283,22 @@ export function KnowledgeCenterView({
       {showAdd && (
         <form onSubmit={handleAdd} className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-3">
           {error && <div className="text-xs text-rose-300">{error}</div>}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Document Title" className="px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100" />
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
+            <select aria-label="Knowledge facility scope" value={facilityId} onChange={(e) => setFacilityId(e.target.value)} className="px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
+              <option value="">Tenant-Wide Scope</option>
+              {data.facilities.map((f) => (
+                <option key={f.id} value={f.id}>{f.code} · {f.name}</option>
+              ))}
+            </select>
+            <select aria-label="Knowledge category" value={category} onChange={(e) => setCategory(e.target.value)} className="px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
               <option value="SOP">SOP</option>
               <option value="SPECIFICATION">SPECIFICATION</option>
               <option value="SAFETY_INTERLOCK">SAFETY_INTERLOCK</option>
               <option value="MANUAL">MANUAL</option>
               <option value="POSTMORTEM">POSTMORTEM</option>
             </select>
-            <select value={minRole} onChange={(e) => setMinRole(e.target.value)} className="px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
+            <select aria-label="Minimum role" value={minRole} onChange={(e) => setMinRole(e.target.value)} className="px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
               <option value="Viewer">Min Role: Viewer</option>
               <option value="Infrastructure Engineer">Min Role: Infrastructure Engineer</option>
               <option value="Operations Manager">Min Role: Operations Manager</option>
@@ -314,7 +326,7 @@ export function KnowledgeCenterView({
         {filtered.map((doc) => (
           <article key={doc.id} className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-400">
-              <span>{doc.category} · Min Role: {doc.minRole}</span>
+              <span>{doc.category} · Min Role: {doc.minRole} · Scope: {doc.facilityId || 'TENANT_WIDE'}</span>
               <span>Source: {doc.sourceRef} · {doc.version}</span>
             </div>
             <h2 className="text-base font-semibold text-slate-100">{doc.title}</h2>
@@ -329,28 +341,53 @@ export function KnowledgeCenterView({
 export function SecurityGovernanceView({
   data,
   user,
+  onSignedOut,
 }: {
   data: WorkspaceData;
   user: UserSession;
+  onSignedOut?: () => void;
 }) {
+  const [revoking, setRevoking] = useState(false);
+
+  const handleRevokeAll = async () => {
+    setRevoking(true);
+    try {
+      await vantaApi.revokeAllSessions();
+      onSignedOut?.();
+    } finally {
+      setRevoking(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <ModuleHeader
         title="Security, RBAC & Audit Governance"
-        subtitle="Server-enforced multi-tenant isolation, role-based permissions, physical interlock protection, and immutable audit trail."
+        subtitle="Zero-trust fail-closed session management, key rotation support, facility-level scope enforcement, physical interlock blocking, and immutable audit logging."
         capability="FUNCTIONAL"
+        actions={
+          <button
+            type="button"
+            disabled={revoking}
+            onClick={handleRevokeAll}
+            className="px-3.5 py-2 rounded-md border border-rose-800 hover:bg-rose-950/60 text-xs font-medium text-rose-200 flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <ShieldOff className="w-3.5 h-3.5" />
+            {revoking ? 'Revoking...' : 'Revoke All My Sessions'}
+          </button>
+        }
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 space-y-1">
-          <div className="text-slate-400">Active Tenant Scope</div>
+          <div className="text-slate-400">Active Tenant & Facility Scope</div>
           <div className="font-mono text-sm font-semibold text-white">{user.tenantId}</div>
-          <div className="text-slate-400">{user.organizationName}</div>
+          <div className="font-mono text-[11px] text-slate-400">Facilities: {user.facilityIds.join(', ')}</div>
         </div>
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 space-y-1">
-          <div className="text-slate-400">Verified Session Role</div>
+          <div className="text-slate-400">Verified Session Role & JTI</div>
           <div className="font-mono text-sm font-semibold text-sky-400">{user.role}</div>
-          <div className="text-slate-400">Signed HMAC-SHA256 HTTP-only cookie</div>
+          <div className="font-mono text-[11px] text-slate-400">Session: {user.sessionId || 'Active'} · Revocable</div>
         </div>
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 space-y-1">
           <div className="text-slate-400">PLC Safety Interlock Override</div>
@@ -395,14 +432,43 @@ export function SecurityGovernanceView({
   );
 }
 
-export function IntegrationsView({ data }: { data: WorkspaceData }) {
+export function IntegrationsView({
+  data,
+  onRefresh,
+}: {
+  data: WorkspaceData;
+  onRefresh?: () => void;
+}) {
+  const [probingId, setProbingId] = useState<string | null>(null);
+  const [probeMsg, setProbeMsg] = useState<string | null>(null);
+
+  const handleProbe = async (id: string) => {
+    setProbingId(id);
+    setProbeMsg(null);
+    try {
+      const res = await vantaApi.probeIotConnector(id);
+      setProbeMsg(`Gateway ${res.connectorId} -> ${res.status}${res.lastError ? ` (${res.lastError})` : ''}`);
+      onRefresh?.();
+    } catch (err) {
+      setProbeMsg(err instanceof Error ? err.message : 'Probe failed.');
+    } finally {
+      setProbingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <ModuleHeader
         title="Industrial & Enterprise Integrations"
-        subtitle="Connector status across OT/IoT protocols and enterprise interfaces. Unconfigured endpoints are explicitly surfaced rather than masked."
+        subtitle="Protocol connectors across OT/IoT gateways with vault credential references and live health probing. Unconfigured endpoints fail loudly."
         capability="PARTIALLY_FUNCTIONAL"
       />
+
+      {probeMsg && (
+        <div className="px-4 py-2.5 rounded-md bg-[#111827] border border-sky-800/60 text-xs font-mono text-sky-200">
+          {probeMsg}
+        </div>
+      )}
 
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
         <table className="w-full text-left border-collapse">
@@ -410,9 +476,10 @@ export function IntegrationsView({ data }: { data: WorkspaceData }) {
             <tr className="border-b border-[#1E293B] text-xs text-slate-400">
               <th className="py-3 px-4">Integration</th>
               <th className="py-3 px-4">Protocol</th>
-              <th className="py-3 px-4">Endpoint</th>
+              <th className="py-3 px-4">Endpoint & Vault Ref</th>
               <th className="py-3 px-4 text-right">Poll Rate</th>
               <th className="py-3 px-4">Capability State</th>
+              <th className="py-3 px-4 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1E293B] text-xs">
@@ -420,9 +487,23 @@ export function IntegrationsView({ data }: { data: WorkspaceData }) {
               <tr key={iot.id} className="hover:bg-[#161E2E]/60">
                 <td className="py-3 px-4 font-medium text-slate-100">{iot.name}</td>
                 <td className="py-3 px-4 font-mono text-slate-300">{iot.protocol}</td>
-                <td className="py-3 px-4 font-mono text-slate-400">{iot.endpoint}</td>
+                <td className="py-3 px-4 font-mono text-slate-400">
+                  <div>{iot.endpoint}</div>
+                  <div className="text-[11px] text-slate-500">{iot.credentialRef || 'NO_CREDENTIAL_REF'}</div>
+                </td>
                 <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-300">{iot.pollingIntervalMs} ms</td>
                 <td className="py-3 px-4"><StatusText value={iot.capabilityState} /></td>
+                <td className="py-3 px-4 text-right">
+                  <button
+                    type="button"
+                    disabled={probingId === iot.id}
+                    onClick={() => handleProbe(iot.id)}
+                    className="px-2.5 py-1 rounded border border-[#243044] hover:border-sky-500 text-[11px] font-mono text-slate-200 inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    {probingId === iot.id ? 'Probing...' : 'Probe'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -481,6 +562,7 @@ export function AdministrationView({
                 <th className="py-3 px-4">Name</th>
                 <th className="py-3 px-4">Email</th>
                 <th className="py-3 px-4">Assigned Role</th>
+                <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4">Created</th>
               </tr>
             </thead>
@@ -490,6 +572,7 @@ export function AdministrationView({
                   <td className="py-3 px-4 font-medium text-slate-100">{u.fullName}</td>
                   <td className="py-3 px-4 font-mono text-slate-300">{u.email}</td>
                   <td className="py-3 px-4 text-sky-400">{u.role}</td>
+                  <td className="py-3 px-4 font-mono text-emerald-400">{u.status || 'ACTIVE'}</td>
                   <td className="py-3 px-4 font-mono text-slate-400">
                     {new Date(u.createdAt).toLocaleDateString()}
                   </td>
@@ -504,54 +587,215 @@ export function AdministrationView({
 }
 
 const CAPABILITY_MATRIX: Array<{ module: string; state: CapabilityState; notes: string }> = [
-  { module: '01 · Core Intelligence & Universal Data Model', state: 'FUNCTIONAL', notes: 'SQLite WAL persistence, tenant isolation, event normalization' },
-  { module: '02 · VANTA Brain', state: 'FUNCTIONAL', notes: 'Server-side Gemini 4 Hydrogen tool-calling + deterministic core fallback' },
-  { module: '03 · Vision Intelligence', state: 'PARTIALLY_FUNCTIONAL', notes: 'Real Gemini multimodal inspection over simulated camera frame buffers (no live RTSP daemon)' },
-  { module: '04 · Industrial IoT & Telemetry', state: 'SIMULATED', notes: 'Z-score statistical engine is live; field MQTT/OPC UA/Modbus hardware runs in explicit simulation mode' },
+  { module: '01 · Core Intelligence & Universal Data Model', state: 'FUNCTIONAL', notes: 'SQLite WAL persistence, versioned migrations, tenant/facility isolation, provenance ledger' },
+  { module: '02 · VANTA Brain', state: 'FUNCTIONAL', notes: '10-stage server Gemini 4 Hydrogen tool-calling + server citation validator + deterministic fallback' },
+  { module: '03 · Vision Intelligence', state: 'PARTIALLY_FUNCTIONAL', notes: 'Uploaded JPEG/PNG/WebP inspection + sample frames; offline RTSP cameras refuse live inspection honestly' },
+  { module: '04 · Industrial IoT & Telemetry', state: 'SIMULATED', notes: 'Normalized ingestion & z-score engine live; simulated LAN gateways vs OFFLINE external brokers' },
   { module: '05 · Asset Intelligence', state: 'FUNCTIONAL', notes: 'Full asset registry, metadata, and directed graph edges' },
-  { module: '06 · Digital Twin', state: 'PARTIALLY_FUNCTIONAL', notes: 'Interactive 2D spatial dependency graph synchronized with SQLite telemetry; 3D BIM mesh PLANNED' },
-  { module: '07 · Predictive Maintenance', state: 'FUNCTIONAL', notes: 'Deterministic headroom RUL + uncertainty bounds + z-score anomaly detection' },
-  { module: '08 · Energy Intelligence', state: 'FUNCTIONAL', notes: 'Separates MEASURED, ESTIMATED, and SIMULATED kWh with verified baseline enforcement' },
-  { module: '09 · Root Cause Intelligence', state: 'FUNCTIONAL', notes: '10-part causal correlation dossiers + human decision & verification persistence' },
-  { module: '10 · Multi-Agent Orchestration', state: 'FUNCTIONAL', notes: '12 scoped agents with bounded step execution and physical safety lock' },
-  { module: '11 · Knowledge Intelligence', state: 'FUNCTIONAL', notes: 'Role-scoped, tenant-isolated technical documentation repository' },
-  { module: '12 · Operations Center & Workflows', state: 'FUNCTIONAL', notes: 'Work order drafting, approval queue, and SSE live telemetry stream' },
-  { module: '14 · Security & Governance', state: 'FUNCTIONAL', notes: 'scrypt auth, HMAC HTTP-only sessions, 9-role RBAC matrix, immutable audit log' },
+  { module: '06 · Digital Twin', state: 'PARTIALLY_FUNCTIONAL', notes: '2D spatial topology, persisted Twin snapshots, and read-only cascade simulator; 3D BIM PLANNED' },
+  { module: '07 · Predictive Maintenance', state: 'FUNCTIONAL', notes: 'Deterministic headroom RUL + uncertainty + sliding-window precision/recall/F1 backtesting' },
+  { module: '08 · Energy Intelligence', state: 'FUNCTIONAL', notes: 'Separates MEASURED, ESTIMATED, and SIMULATED kWh with facility/equipment attribution' },
+  { module: '09 · Root Cause Intelligence', state: 'FUNCTIONAL', notes: 'Temporal precedence causal correlation dossiers + selectionReason + human verification' },
+  { module: '10 · Multi-Agent Orchestration', state: 'FUNCTIONAL', notes: '12 scoped agents with step trace, conflict detection, idempotency & physical safety lock' },
+  { module: '11 · Knowledge Intelligence', state: 'FUNCTIONAL', notes: 'Role-scoped, facility-scoped, tenant-isolated technical documentation repository' },
+  { module: '12 · Operations Center & Workflows', state: 'FUNCTIONAL', notes: 'Work order drafting, approval queue, and single-use ticket SSE live telemetry stream' },
+  { module: '14 · Security & Governance', state: 'FUNCTIONAL', notes: 'Fail-closed secrets, key rotation, session revocation, layered rate limits & VACUUM INTO backups' },
 ];
 
-export function SystemHealthView({ health }: { health: SystemHealthStatus | null }) {
+export function SystemHealthView({
+  health,
+  user,
+}: {
+  health: SystemHealthStatus | null;
+  user?: UserSession;
+}) {
+  const canBackup = user ? canPerformAction(user.role, 'MANAGE_BACKUPS') : false;
+  const [liveHealth, setLiveHealth] = useState<SystemHealthStatus | null>(health);
+  const [backups, setBackups] = useState<BackupMetadataDto[]>([]);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+
+  const refreshHealthSnapshot = () => {
+    vantaApi
+      .getHealth()
+      .then((res) => setLiveHealth(res))
+      .catch(() => {
+        // Retain previous snapshot on transient failure
+      });
+  };
+
+  useEffect(() => {
+    refreshHealthSnapshot();
+  }, []);
+
+  useEffect(() => {
+    if (health) setLiveHealth(health);
+  }, [health]);
+
+  useEffect(() => {
+    if (!canBackup) return;
+    vantaApi
+      .listBackups()
+      .then((res) => setBackups(res.backups))
+      .catch(() => {
+        // Ignore if session lacked privilege
+      });
+  }, [canBackup]);
+
+  const handleCreateBackup = async () => {
+    setBackupLoading(true);
+    setBackupNotice(null);
+    try {
+      const created = await vantaApi.createBackup('console');
+      setBackupNotice(`Created verified backup ${created.filename} (SHA256 ${created.sha256.slice(0, 12)}..., ${created.sizeBytes} bytes).`);
+      const list = await vantaApi.listBackups();
+      setBackups(list.backups);
+      refreshHealthSnapshot();
+    } catch (err) {
+      setBackupNotice(err instanceof Error ? err.message : 'Backup creation failed.');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleVerifyBackup = async (filename: string) => {
+    setBackupLoading(true);
+    setBackupNotice(null);
+    try {
+      const res = await vantaApi.verifyBackup(filename);
+      setBackupNotice(
+        `Verified ${res.filename}: valid=${res.valid}, integrity=${res.integrityCheck}, sha256Match=${res.sha256Match}, orgs=${res.organizationCount}`
+      );
+    } catch (err) {
+      setBackupNotice(err instanceof Error ? err.message : 'Verification failed.');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const currentHealth = liveHealth || health;
+
   return (
     <div className="space-y-6">
       <ModuleHeader
-        title="System Health & Capability Transparency"
-        subtitle="Live backend telemetry, database status, Gemini runtime state, and honest Part 11 module capability classification."
+        title="System Health, Observability & Database Backups"
+        subtitle="Live backend telemetry, migration state, Gemini runtime observability, SQLite WAL backups, and honest module capability classification."
         capability="FUNCTIONAL"
+        actions={
+          <button
+            type="button"
+            onClick={refreshHealthSnapshot}
+            className="px-3.5 py-2 rounded-md border border-[#243044] hover:border-sky-500 text-xs font-medium text-slate-200 flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh Telemetry
+          </button>
+        }
       />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">
           <div className="text-slate-400">API Runtime</div>
-          <div className="mt-1"><StatusText value={health?.status || 'OFFLINE'} /></div>
-        </div>
-        <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">
-          <div className="text-slate-400">Relational Database</div>
-          <div className="font-mono text-emerald-400 mt-1">{health?.database || 'CHECKING'}</div>
-        </div>
-        <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">
-          <div className="text-slate-400">Gemini Server Engine</div>
-          <div className={`font-mono mt-1 ${health?.geminiConfigured ? 'text-emerald-400' : 'text-amber-400'}`}>
-            {health?.geminiConfigured ? 'CONFIGURED (GEMINI-4-HYDROGEN)' : 'FALLBACK (NO KEY IN ENV)'}
+          <div className="mt-1"><StatusText value={currentHealth?.status || 'OFFLINE'} /></div>
+          <div className="font-mono text-[11px] text-slate-400 mt-1">
+            Migrations: {currentHealth?.migrationsApplied ?? 3} applied
           </div>
         </div>
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">
-          <div className="text-slate-400">IoT Hardware Mode</div>
-          <div className="font-mono text-sky-400 mt-1">{health?.simulationEngine || 'SIMULATED'}</div>
+          <div className="text-slate-400">Relational Database</div>
+          <div className="font-mono text-emerald-400 mt-1">{currentHealth?.database || 'CHECKING'}</div>
+          <div className="font-mono text-[11px] text-slate-400 mt-1">
+            RSS {currentHealth?.observability?.memoryRssMb ?? 0} MB · SSE {currentHealth?.observability?.activeSseStreams ?? 0}
+          </div>
+        </div>
+        <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">
+          <div className="text-slate-400">Gemini Server Engine</div>
+          <div className={`font-mono mt-1 ${currentHealth?.geminiConfigured ? 'text-emerald-400' : 'text-amber-400'}`}>
+            {currentHealth?.geminiConfigured ? `CONFIGURED (${currentHealth.geminiModelId || 'GEMINI-4-HYDROGEN'})` : 'FALLBACK (NO KEY IN ENV)'}
+          </div>
+          <div className="font-mono text-[11px] text-slate-400 mt-1">
+            AI Calls: {currentHealth?.observability?.aiCallsTotal ?? 0} (Avg {currentHealth?.observability?.aiAvgLatencyMs ?? 0}ms)
+          </div>
+        </div>
+        <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">
+          <div className="text-slate-400">HTTP Latency & Limits</div>
+          <div className="font-mono text-sky-400 mt-1">
+            Avg {currentHealth?.observability?.avgLatencyMs ?? 0}ms · P95 {currentHealth?.observability?.p95LatencyMs ?? 0}ms
+          </div>
+          <div className="font-mono text-[11px] text-slate-400 mt-1">
+            Requests: {currentHealth?.observability?.totalRequests ?? 0} · 429 Blocks: {currentHealth?.observability?.rateLimitRejections ?? 0}
+          </div>
         </div>
       </div>
 
+      {canBackup ? (
+        <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <Database className="w-4 h-4 text-sky-400" />
+                SQLite WAL Hot Backups & Integrity Verification
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Produces self-contained transactional snapshots via SQLite VACUUM INTO with SHA-256 manifests.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={backupLoading}
+              onClick={handleCreateBackup}
+              className="px-3.5 py-2 rounded-md bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-xs font-medium text-white whitespace-nowrap"
+            >
+              {backupLoading ? 'Working...' : 'Create Verified Backup'}
+            </button>
+          </div>
+
+          {backupNotice && (
+            <div className="p-2.5 rounded bg-[#0B0F17] border border-sky-800/60 text-xs font-mono text-sky-200">
+              {backupNotice}
+            </div>
+          )}
+
+          <div className="divide-y divide-[#1E293B] text-xs font-mono">
+            {backups.length === 0 ? (
+              <div className="py-2 text-slate-400">No snapshots stored yet in .vanta-data/backups.</div>
+            ) : (
+              backups.slice(0, 6).map((b) => (
+                <div key={b.filename} className="py-2.5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-slate-100">{b.filename}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {(b.sizeBytes / 1024).toFixed(1)} KB · SHA256 {b.sha256.slice(0, 16)}... · {b.integrityCheck}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={backupLoading}
+                    onClick={() => handleVerifyBackup(b.filename)}
+                    className="px-2.5 py-1 rounded border border-[#243044] hover:border-emerald-500 text-[11px] text-emerald-300"
+                  >
+                    Verify Integrity
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 flex items-center justify-between gap-4 text-xs">
+          <div>
+            <div className="font-medium text-slate-200">SQLite WAL Hot Backups & Integrity Verification</div>
+            <div className="text-slate-400 mt-0.5">
+              Active role <span className="font-mono text-sky-400">{user?.role}</span> is read-only for database snapshot operations. Sign in as <span className="font-mono text-slate-200">Platform Administrator</span> to create or verify <span className="font-mono">VACUUM INTO</span> backups.
+            </div>
+          </div>
+          <StatusText value="RBAC_PROTECTED" />
+        </div>
+      )}
+
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
         <div className="px-5 py-3.5 border-b border-[#1E293B]">
-          <h2 className="text-sm font-semibold text-slate-100">Module Functionality Matrix (Part 11 Compliance)</h2>
+          <h2 className="text-sm font-semibold text-slate-100">Module Functionality Matrix (Honest Verification)</h2>
         </div>
         <table className="w-full text-left border-collapse">
           <thead>

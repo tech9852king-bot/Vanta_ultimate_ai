@@ -1,18 +1,121 @@
 import React, { useState } from 'react';
-import { Bot, ShieldAlert } from 'lucide-react';
+import { Bot, ShieldAlert, BarChart2 } from 'lucide-react';
 import { vantaApi } from '../api/client';
+import type { PredictiveBacktestResult } from '../core/types';
 import type { WorkspaceData } from '../types/workspace';
 import { ModuleHeader, StatusText } from './StatusText';
 
 export function PredictiveMaintenanceView({ data }: { data: WorkspaceData }) {
+  const [selectedAssetId, setSelectedAssetId] = useState(data.assets[0]?.id || '');
+  const [backtest, setBacktest] = useState<PredictiveBacktestResult | null>(null);
+  const [btLoading, setBtLoading] = useState(false);
+  const [btError, setBtError] = useState<string | null>(null);
+
+  const effectiveAssetId = data.assets.some((a) => a.id === selectedAssetId)
+    ? selectedAssetId
+    : data.assets[0]?.id || '';
+
+  const handleRunBacktest = async () => {
+    if (!effectiveAssetId) return;
+    setBtLoading(true);
+    setBtError(null);
+    try {
+      const res = await vantaApi.getPredictiveBacktest(effectiveAssetId);
+      setBacktest(res);
+    } catch (err) {
+      setBtError(err instanceof Error ? err.message : 'Backtest evaluation failed.');
+    } finally {
+      setBtLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <ModuleHeader
         title="Predictive Maintenance & RUL Forecasting"
-        subtitle="Remaining Useful Life estimates, statistical z-score anomaly tracking, and explicit uncertainty bounds. Every assessment discloses its data source and validation method."
+        subtitle="Deterministic headroom RUL estimates, statistical z-score anomaly tracking, drift evaluation, and historical sliding-window backtesting."
         capability="FUNCTIONAL"
         dataMode="MIXED"
       />
+
+      {/* Historical Backtest & Drift Evaluation Card */}
+      <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-sky-400" />
+              Historical Backtest & Signal Drift Calibration
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Evaluates statistical z-score detection precision, recall, F1 score, data completeness, and drift against stored asset telemetry.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              aria-label="Select asset for backtest"
+              value={effectiveAssetId}
+              onChange={(e) => setSelectedAssetId(e.target.value)}
+              className="px-3 py-2 rounded-md bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
+            >
+              {data.assets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} — {a.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={btLoading || !effectiveAssetId}
+              onClick={handleRunBacktest}
+              className="px-3.5 py-2 rounded-md bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-xs font-medium text-white whitespace-nowrap"
+            >
+              {btLoading ? 'Evaluating...' : 'Run Backtest Evaluation'}
+            </button>
+          </div>
+        </div>
+
+        {btError && <div className="text-xs text-rose-300">{btError}</div>}
+
+        {backtest && (
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 pt-3 border-t border-[#1E293B] text-xs font-mono">
+            <div className="bg-[#0B0F17] p-3 rounded border border-[#1E293B]">
+              <div className="text-slate-400">Samples</div>
+              <div className="text-base text-white mt-0.5">{backtest.sampleCount}</div>
+            </div>
+            <div className="bg-[#0B0F17] p-3 rounded border border-[#1E293B]">
+              <div className="text-slate-400">Precision</div>
+              <div className="text-base text-emerald-400 mt-0.5">
+                {backtest.precision !== null ? backtest.precision : 'N/A'}
+              </div>
+            </div>
+            <div className="bg-[#0B0F17] p-3 rounded border border-[#1E293B]">
+              <div className="text-slate-400">Recall</div>
+              <div className="text-base text-sky-400 mt-0.5">
+                {backtest.recall !== null ? backtest.recall : 'N/A'}
+              </div>
+            </div>
+            <div className="bg-[#0B0F17] p-3 rounded border border-[#1E293B]">
+              <div className="text-slate-400">F1 Score</div>
+              <div className="text-base text-white mt-0.5">
+                {backtest.f1Score !== null ? backtest.f1Score : 'N/A'}
+              </div>
+            </div>
+            <div className="bg-[#0B0F17] p-3 rounded border border-[#1E293B]">
+              <div className="text-slate-400">Data Quality</div>
+              <div className="text-base text-slate-200 mt-0.5">{backtest.dataQualityScore}/100</div>
+            </div>
+            <div className="bg-[#0B0F17] p-3 rounded border border-[#1E293B]">
+              <div className="text-slate-400">Drift Status</div>
+              <div className={`text-sm mt-0.5 ${backtest.driftDetected ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {backtest.driftDetected ? 'DRIFT DETECTED' : 'NOMINAL'}
+              </div>
+            </div>
+            <div className="col-span-2 md:col-span-6 text-[11px] text-slate-400 pt-1">
+              {backtest.calibrationNote}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="space-y-4">
         {data.predictiveAssessments.map((pa) => {
@@ -22,7 +125,7 @@ export function PredictiveMaintenanceView({ data }: { data: WorkspaceData }) {
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1E293B] pb-3">
                 <div>
                   <div className="text-xs font-mono text-slate-400">
-                    {asset?.code || pa.assetId} · {pa.validationStatus} · {pa.mode}
+                    {asset?.code || pa.assetId} · {pa.validationStatus} · {pa.modelKind || 'HEADROOM_RUL_ESTIMATE'} · {pa.mode}
                   </div>
                   <h2 className="text-base font-semibold text-slate-100 mt-0.5">
                     {asset?.name || pa.assetId} — {pa.failureMode}
@@ -36,14 +139,20 @@ export function PredictiveMaintenanceView({ data }: { data: WorkspaceData }) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                 <div>
-                  <span className="text-slate-400 block">Methodology</span>
+                  <span className="text-slate-400 block">Methodology ({pa.modelVersion || 'vanta-rul-heuristic-2.0'})</span>
                   <span className="text-slate-200">{pa.methodology}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block">Data Source</span>
                   <span className="text-slate-200">{pa.dataSource}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Quality & Drift</span>
+                  <span className="font-mono text-slate-200">
+                    Quality {pa.dataQualityScore ?? 85}/100 · {pa.driftStatus || 'NOMINAL'}
+                  </span>
                 </div>
               </div>
 
@@ -65,7 +174,7 @@ export function EnergyIntelligenceView({ data }: { data: WorkspaceData }) {
     <div className="space-y-6">
       <ModuleHeader
         title="Energy Intelligence & Load Attribution"
-        subtitle="Strict separation of measured utility meters from estimated and simulated load profiles. Savings claims are withheld unless verified measured baselines exist."
+        subtitle="Strict separation of measured utility meters from estimated and simulated load profiles across facility and equipment attribution."
         capability="FUNCTIONAL"
         dataMode="MIXED"
       />
@@ -104,6 +213,47 @@ export function EnergyIntelligenceView({ data }: { data: WorkspaceData }) {
           </div>
         </div>
       </div>
+
+      {/* Facility Attribution Breakdown */}
+      {energySummary.byFacility && energySummary.byFacility.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 space-y-2.5">
+            <h2 className="text-sm font-semibold text-slate-100">Facility Load Attribution</h2>
+            <div className="divide-y divide-[#1E293B] text-xs font-mono">
+              {energySummary.byFacility.map((row) => {
+                const fac = data.facilities.find((f) => f.id === row.facilityId);
+                return (
+                  <div key={row.facilityId} className="py-2 flex items-center justify-between gap-2">
+                    <span className="text-slate-200">{fac?.code || row.facilityId}</span>
+                    <span className="text-emerald-400">{row.measuredKwh.toLocaleString()} kWh MEASURED</span>
+                    <span className="text-sky-400">{row.estimatedOrSimulatedKwh.toLocaleString()} kWh SIM/EST</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 space-y-2.5">
+            <h2 className="text-sm font-semibold text-slate-100">Equipment Meter Attribution</h2>
+            {energySummary.byEquipment && energySummary.byEquipment.length > 0 ? (
+              <div className="divide-y divide-[#1E293B] text-xs font-mono">
+                {energySummary.byEquipment.map((eq) => {
+                  const asset = data.assets.find((a) => a.id === eq.assetId);
+                  return (
+                    <div key={eq.assetId} className="py-2 flex items-center justify-between gap-2">
+                      <span className="text-slate-200">{asset?.code || eq.assetId}</span>
+                      <span className="text-slate-300">
+                        {(eq.measuredKwh + eq.estimatedOrSimulatedKwh).toLocaleString()} kWh ({eq.mode})
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">No asset-level submeters assigned in current scope.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
         <table className="w-full text-left border-collapse">
@@ -159,11 +309,15 @@ export function RootCauseAnalysisView({
   const [decisionMap, setDecisionMap] = useState<Record<string, { decision: string; resolution: string }>>({});
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
+  const effectiveIncidentId = data.incidents.some((inc) => inc.id === selectedIncidentId)
+    ? selectedIncidentId
+    : data.incidents[0]?.id || '';
+
   const handleCorrelate = async () => {
-    if (!selectedIncidentId) return;
+    if (!effectiveIncidentId) return;
     setStatusMsg(null);
     try {
-      await vantaApi.correlateRca(selectedIncidentId);
+      await vantaApi.correlateRca(effectiveIncidentId);
       setStatusMsg('Generated new cross-system Root Cause Investigation dossier.');
       onRefresh();
     } catch (err) {
@@ -194,14 +348,14 @@ export function RootCauseAnalysisView({
     <div className="space-y-6">
       <ModuleHeader
         title="Root Cause Intelligence"
-        subtitle="Cross-system investigation correlating asset dependency edges, anomalous telemetry, events, and maintenance gaps into explainable causal dossiers."
+        subtitle="Cross-system investigation correlating asset dependency edges, temporal precedence, anomalous telemetry, and maintenance gaps into explainable dossiers."
         capability="FUNCTIONAL"
         dataMode="MIXED"
         actions={
           <div className="flex items-center gap-2">
             <select
               aria-label="Select incident to correlate"
-              value={selectedIncidentId}
+              value={effectiveIncidentId}
               onChange={(e) => setSelectedIncidentId(e.target.value)}
               className="px-3 py-2 rounded-md bg-[#111827] border border-[#243044] text-xs text-slate-100 max-w-xs"
             >
@@ -243,7 +397,7 @@ export function RootCauseAnalysisView({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-xs">
               <div className="space-y-3">
-                <div className="font-semibold text-slate-200">Ranked Potential Causes</div>
+                <div className="font-semibold text-slate-200">Ranked Potential Causes (Correlation Only)</div>
                 <div className="space-y-2">
                   {rca.potentialCauses.map((c, idx) => (
                     <div key={idx} className="p-3 rounded bg-[#0B0F17] border border-[#1E293B] space-y-1">
@@ -252,6 +406,11 @@ export function RootCauseAnalysisView({
                         <span className="font-mono text-amber-400 tabular-nums shrink-0">{c.score}/100</span>
                       </div>
                       <p className="text-slate-400">{c.mechanism}</p>
+                      {c.selectionReason && (
+                        <div className="font-mono text-[11px] text-sky-400 pt-1">
+                          Why selected: {c.selectionReason}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -274,8 +433,8 @@ export function RootCauseAnalysisView({
                     </li>
                   ))}
                 </ul>
-                <div className="pt-2 text-slate-400">
-                  <span className="font-medium text-slate-300">Uncertainty: </span>
+                <div className="p-2.5 rounded bg-amber-950/30 border border-amber-900/50 text-amber-200">
+                  <span className="font-semibold">Epistemic Uncertainty: </span>
                   {rca.uncertaintyNotes}
                 </div>
                 <div className="text-slate-400">
@@ -362,14 +521,25 @@ export function AIAgentsView({
   const [selectedAgentId, setSelectedAgentId] = useState(data.agents[0]?.id || 'agent-orchestrator');
   const [taskPrompt, setTaskPrompt] = useState('Analyze CHL-01 and CNC-04 health trends and prepare a maintenance recommendation.');
   const [running, setRunning] = useState(false);
+  const [execNotice, setExecNotice] = useState<string | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
 
   const handleRunAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     setRunning(true);
     setExecError(null);
+    setExecNotice(null);
     try {
-      await vantaApi.executeAgent(selectedAgentId, taskPrompt);
+      const res = (await vantaApi.executeAgent(selectedAgentId, taskPrompt)) as {
+        deduplicated?: boolean;
+        status?: string;
+        durationMs?: number;
+      };
+      setExecNotice(
+        res.deduplicated
+          ? `Idempotent cache hit: returned existing bounded execution (${res.status}).`
+          : `Agent execution finished with status ${res.status} (${res.durationMs || 0}ms).`
+      );
       onRefresh();
     } catch (err) {
       setExecError(err instanceof Error ? err.message : 'Agent execution failed.');
@@ -382,14 +552,14 @@ export function AIAgentsView({
     <div className="space-y-6">
       <ModuleHeader
         title="Multi-Agent Orchestration Ecosystem"
-        subtitle="12 specialized VANTA domain agents with strict tool allowlists, bounded step limits, and zero autonomous physical actuation."
+        subtitle="12 specialized domain agents with task-planned tool selection, permission validation, execution tracing, conflict checks, and duplicate-execution idempotency."
         capability="FUNCTIONAL"
       />
 
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 flex items-center gap-3 text-xs text-slate-300">
         <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
         <span>
-          Physical Safety Boundary: Every agent has <span className="font-mono text-slate-100">canActuatePhysicalControl = false</span>. Prompts attempting to bypass PLC interlocks or emergency stops are blocked and logged.
+          Physical Safety Boundary: Every agent has <span className="font-mono text-slate-100">canActuatePhysicalControl = false</span>. Prompts attempting to bypass PLC interlocks or invoke unauthorized tools are blocked and traced.
         </span>
       </div>
 
@@ -397,6 +567,7 @@ export function AIAgentsView({
       <form onSubmit={handleRunAgent} className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
         <h2 className="text-sm font-semibold text-slate-100">Dispatch Bounded Agent Task</h2>
         {execError && <div className="text-xs text-rose-300">{execError}</div>}
+        {execNotice && <div className="text-xs font-mono text-sky-300">{execNotice}</div>}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-4">
             <label htmlFor="agent-select" className="block text-xs text-slate-400 mb-1">Select Agent</label>
@@ -453,27 +624,47 @@ export function AIAgentsView({
         ))}
       </div>
 
-      {/* Execution History */}
+      {/* Execution History with Step Trace & Conflict Detection */}
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
         <div className="px-5 py-3.5 border-b border-[#1E293B]">
-          <h2 className="text-sm font-semibold text-slate-100">Agent Execution Audit Log</h2>
+          <h2 className="text-sm font-semibold text-slate-100">Agent Execution Trace & Conflict Log</h2>
         </div>
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-[#1E293B] text-xs text-slate-400">
               <th className="py-3 px-4">Agent</th>
               <th className="py-3 px-4">Status</th>
-              <th className="py-3 px-4">Tools Invoked</th>
-              <th className="py-3 px-4">Summary</th>
+              <th className="py-3 px-4">Step Trace</th>
+              <th className="py-3 px-4">Summary & Conflicts</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1E293B] text-xs">
             {data.agentExecutions.map((ex) => (
-              <tr key={ex.id} className="hover:bg-[#161E2E]/60">
-                <td className="py-3 px-4 font-mono text-slate-200 whitespace-nowrap">{ex.agentId}</td>
+              <tr key={ex.id} className="hover:bg-[#161E2E]/60 align-top">
+                <td className="py-3 px-4 font-mono text-slate-200 whitespace-nowrap">
+                  <div>{ex.agentId}</div>
+                  <div className="text-[11px] text-slate-500">{ex.durationMs || 0}ms</div>
+                </td>
                 <td className="py-3 px-4"><StatusText value={ex.status} /></td>
-                <td className="py-3 px-4 font-mono text-slate-400">{ex.toolsInvoked.join(', ') || 'None'}</td>
-                <td className="py-3 px-4 text-slate-300">{ex.outputSummary}</td>
+                <td className="py-3 px-4 font-mono text-[11px] text-slate-400 space-y-1">
+                  {ex.trace && ex.trace.length > 0 ? (
+                    ex.trace.map((step) => (
+                      <div key={step.stepIndex}>
+                        #{step.stepIndex} {step.toolName} [{step.status}, {step.recordsRetrieved} rec, {step.durationMs}ms]
+                      </div>
+                    ))
+                  ) : (
+                    <div>{ex.toolsInvoked.join(', ') || 'None'}</div>
+                  )}
+                </td>
+                <td className="py-3 px-4 text-slate-300 space-y-1">
+                  <div>{ex.outputSummary}</div>
+                  {ex.conflictsDetected && ex.conflictsDetected.length > 0 && (
+                    <div className="text-[11px] font-mono text-amber-300">
+                      Conflict: {ex.conflictsDetected.join(' ')}
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

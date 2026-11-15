@@ -7,6 +7,7 @@ import type {
   AuditRecord,
   BuildingZone,
   Camera,
+  DigitalTwinSnapshot,
   EnergyRecord,
   Facility,
   Incident,
@@ -50,6 +51,7 @@ export interface WorkspaceData {
   approvals: ApprovalItem[];
   auditRecords: AuditRecord[];
   knowledgeDocuments: KnowledgeDocument[];
+  twinSnapshots?: DigitalTwinSnapshot[];
   users: Array<{
     id: string;
     tenantId: string;
@@ -57,6 +59,7 @@ export interface WorkspaceData {
     fullName: string;
     role: VantaRole;
     facilityIdsJson: string;
+    status?: string;
     createdAt: string;
   }>;
 }
@@ -64,12 +67,37 @@ export interface WorkspaceData {
 export interface SystemHealthStatus {
   status: string;
   database: string;
+  migrationsApplied?: number;
   geminiConfigured: boolean;
+  geminiModelId?: string;
+  allowDemoAuth?: boolean;
   simulationEngine: string;
+  observability?: {
+    uptimeSeconds: number;
+    totalRequests: number;
+    apiErrors5xx: number;
+    apiErrors4xx: number;
+    avgLatencyMs: number;
+    p95LatencyMs: number;
+    aiCallsTotal: number;
+    aiCallsFailed: number;
+    aiAvgLatencyMs: number;
+    rateLimitRejections: number;
+    activeSseStreams: number;
+    memoryRssMb: number;
+  };
   timestamp: string;
 }
 
 export interface AuthSessionResponse {
   authenticated: boolean;
   user: UserSession | null;
+}
+
+export interface BackupMetadataDto {
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+  integrityCheck: string;
+  createdAt: string;
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ShieldCheck, Building2, ArrowRight } from 'lucide-react';
 import { vantaApi } from '../api/client';
 import type { IndustrySector, UserSession } from '../core/types';
@@ -25,13 +25,19 @@ const DEMO_PERSONAS = [
     label: 'Marcus Chen · Platform Administrator',
     tenant: 'Apex Industrial & Grid Corp',
     email: 'admin@apex-industrial.io',
-    scope: 'Global Governance, Users & System Admin',
+    scope: 'Global Governance, Backups & System Admin',
+  },
+  {
+    label: 'Dr. Priya Nair · Infrastructure Engineer',
+    tenant: 'Apex Industrial & Grid Corp',
+    email: 'engineer@apex-industrial.io',
+    scope: 'Scoped Facilities Only (No Warehouse West)',
   },
   {
     label: 'Audit Observer · Viewer (Read-Only)',
     tenant: 'Apex Industrial & Grid Corp',
     email: 'viewer@apex-industrial.io',
-    scope: 'Read-only RBAC verification (no approvals)',
+    scope: 'Facility A Read-Only (RBAC verified)',
   },
   {
     label: 'David Kowalski · Facility Administrator',
@@ -47,14 +53,35 @@ export function AuthPortal({
   onAuthenticated: (user: UserSession) => void;
 }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('ops.manager@apex-industrial.io');
-  const [password, setPassword] = useState('VantaDemo!2026');
+  const [allowDemoAuth, setAllowDemoAuth] = useState<boolean>(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [orgName, setOrgName] = useState('');
   const [industry, setIndustry] = useState<IndustrySector>('Manufacturing & Industrial Production');
   const [region, setRegion] = useState('US-West');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    vantaApi
+      .getAuthConfig()
+      .then((cfg) => {
+        if (!active) return;
+        setAllowDemoAuth(cfg.allowDemoAuth);
+        if (cfg.allowDemoAuth) {
+          setEmail('ops.manager@apex-industrial.io');
+          setPassword('VantaDemo!2026');
+        }
+      })
+      .catch(() => {
+        if (active) setAllowDemoAuth(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,30 +149,40 @@ export function AuthPortal({
             </p>
           </div>
 
-          <div className="space-y-3 pt-6 border-t border-[#1E293B] mt-6">
-            <div className="text-xs font-medium text-slate-300">
-              Instant Multi-Tenant & Role Verification Accounts
+          {allowDemoAuth ? (
+            <div className="space-y-3 pt-6 border-t border-[#1E293B] mt-6">
+              <div className="text-xs font-medium text-slate-300">
+                Development Verification Personas
+              </div>
+              <div className="space-y-2">
+                {DEMO_PERSONAS.map((persona) => (
+                  <button
+                    key={persona.email}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleQuickDemo(persona.email)}
+                    className="w-full text-left px-3.5 py-2.5 rounded-md bg-[#0B0F17] border border-[#1E293B] hover:border-sky-500/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-100">{persona.label}</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                      {persona.tenant} · {persona.scope}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="space-y-2">
-              {DEMO_PERSONAS.map((persona) => (
-                <button
-                  key={persona.email}
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleQuickDemo(persona.email)}
-                  className="w-full text-left px-3.5 py-2.5 rounded-md bg-[#0B0F17] border border-[#1E293B] hover:border-sky-500/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-slate-100">{persona.label}</span>
-                    <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-400 mt-0.5">
-                    {persona.tenant} · {persona.scope}
-                  </div>
-                </button>
-              ))}
+          ) : (
+            <div className="pt-6 border-t border-[#1E293B] mt-6 space-y-2 text-xs text-slate-400">
+              <div className="font-mono text-emerald-400">ZERO-TRUST PRODUCTION AUTHENTICATION</div>
+              <p>
+                Demo persona shortcuts are disabled in production mode. Sign in with provisioned
+                enterprise credentials or register a new isolated organization tenant.
+              </p>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="lg:col-span-7 bg-[#111827] border border-[#1E293B] rounded-lg p-7 flex flex-col justify-between">
@@ -205,7 +242,7 @@ export function AuthPortal({
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-md bg-[#0B0F17] border border-[#243044] text-sm text-slate-100 focus:outline-none focus:border-sky-500"
-                    placeholder="ops.manager@apex-industrial.io"
+                    placeholder="operator@organization.io"
                   />
                 </div>
                 <div>
@@ -335,7 +372,7 @@ export function AuthPortal({
           <div className="pt-5 mt-6 border-t border-[#1E293B] flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Server-enforced RBAC & tenant isolation
+              Server-enforced RBAC, facility isolation & revocation
             </span>
             <span className="flex items-center gap-1.5">
               <Building2 className="w-4 h-4 text-sky-400" />

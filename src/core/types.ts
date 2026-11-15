@@ -10,6 +10,21 @@ export type CapabilityState =
   | 'NOT_CONFIGURED'
   | 'PLANNED';
 
+export type CameraCapabilityState =
+  | 'LIVE'
+  | 'SIMULATED'
+  | 'SAMPLE_IMAGE'
+  | 'OFFLINE'
+  | 'DEGRADED'
+  | 'NOT_CONFIGURED';
+
+export type CameraProviderType =
+  | 'SAMPLE_BUFFER'
+  | 'UPLOADED_IMAGE'
+  | 'RTSP_EDGE'
+  | 'ONVIF_DEVICE'
+  | 'WEBRTC_PROXY';
+
 export type IndustrySector =
   | 'Manufacturing & Industrial Production'
   | 'Energy & Power Infrastructure'
@@ -76,6 +91,8 @@ export interface UserSession {
   fullName: string;
   role: VantaRole;
   facilityIds: string[];
+  sessionId?: string;
+  status?: 'ACTIVE' | 'SUSPENDED';
 }
 
 export interface Site {
@@ -132,9 +149,9 @@ export interface Asset {
   status: AssetStatus;
   owner: string;
   dataMode: DataOriginMode;
-  healthScore: number; // 0..100 computed from telemetry/maintenance
-  xPos: number; // Digital Twin normalized coordinate 0..100
-  yPos: number; // Digital Twin normalized coordinate 0..100
+  healthScore: number;
+  xPos: number;
+  yPos: number;
   metadata: Record<string, string | number | boolean>;
   updatedAt: string;
 }
@@ -148,6 +165,43 @@ export interface AssetRelationship {
   criticalityWeight: number;
 }
 
+export interface DigitalTwinSnapshot {
+  id: string;
+  tenantId: string;
+  facilityId: string | null;
+  twinVersion: string;
+  label: string;
+  assetCount: number;
+  criticalAssetCount: number;
+  meanHealthScore: number;
+  stateSummary: Array<{
+    assetId: string;
+    code: string;
+    status: AssetStatus;
+    healthScore: number;
+    dataMode: DataOriginMode;
+  }>;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface TwinScenarioResult {
+  seedAssetId: string;
+  scenarioType: 'ASSET_OFFLINE' | 'COOLING_DEGRADATION' | 'POWER_LOSS';
+  affectedAssets: Array<{
+    assetId: string;
+    code: string;
+    name: string;
+    hopDistance: number;
+    impactType: string;
+    projectedStatus: AssetStatus;
+    projectedHealthDelta: number;
+  }>;
+  cascadeDepth: number;
+  mode: 'SIMULATED';
+  disclaimer: string;
+}
+
 export interface Camera {
   id: string;
   tenantId: string;
@@ -156,6 +210,8 @@ export interface Camera {
   assetId: string | null;
   name: string;
   streamProtocol: 'RTSP_EDGE' | 'ONVIF_SIMULATED' | 'WEBRTC_PROXY';
+  providerType?: CameraProviderType;
+  capabilityState?: CameraCapabilityState;
   resolution: string;
   fps: number;
   status: 'ONLINE' | 'DEGRADED' | 'OFFLINE';
@@ -164,6 +220,8 @@ export interface Camera {
   confidenceThreshold: number;
   sampleImageUrl: string;
   privacyPolicy: string;
+  lastError?: string | null;
+  streamHealthPct?: number;
   lastFrameAt: string;
 }
 
@@ -188,6 +246,7 @@ export interface VisionEvent {
   detections: VisionDetection[];
   inferenceEngine: 'GEMINI_MULTIMODAL' | 'RULE_BASED_EDGE';
   mode: DataOriginMode;
+  captureSource?: 'SAMPLE_IMAGE' | 'UPLOADED_IMAGE' | 'SIMULATED_BUFFER';
   evidenceImageUrl: string;
   createdAt: string;
 }
@@ -199,16 +258,21 @@ export interface IoTIntegration {
   name: string;
   protocol: 'MQTT' | 'OPC_UA' | 'MODBUS_TCP' | 'REST_API' | 'WEBSOCKET';
   endpoint: string;
-  status: 'CONNECTED' | 'SIMULATED' | 'DEGRADED' | 'NOT_CONFIGURED';
+  status: 'CONNECTED' | 'SIMULATED' | 'DEGRADED' | 'NOT_CONFIGURED' | 'OFFLINE';
   capabilityState: CapabilityState;
   pollingIntervalMs: number;
   deviceCount: number;
+  latencyMs?: number | null;
+  consecutiveFailures?: number;
+  lastError?: string | null;
+  credentialRef?: string | null;
   lastHeartbeatAt: string;
 }
 
 export interface TelemetryPoint {
   id: string;
   tenantId: string;
+  facilityId?: string;
   assetId: string;
   metricName: string;
   value: number;
@@ -219,6 +283,18 @@ export interface TelemetryPoint {
   isAnomaly: boolean;
   mode: DataOriginMode;
   timestamp: string;
+}
+
+export interface EvidenceProvenanceRecord {
+  id: string;
+  sourceModule: string;
+  assetId: string | null;
+  facilityId: string | null;
+  timestamp: string;
+  dataMode: DataOriginMode;
+  processingMethod: string;
+  modelVersion: string | null;
+  summary: string;
 }
 
 export interface InfrastructureEvent {
@@ -299,15 +375,33 @@ export interface PredictiveAssessment {
   assetId: string;
   facilityId: string;
   failureMode: string;
-  riskScore: number; // 0..100
+  riskScore: number;
   rulHours: number;
   uncertaintyHours: number;
   methodology: string;
   dataSource: string;
   validationStatus: 'RULE_VERIFIED' | 'STATISTICAL_ZSCORE' | 'SIMULATED_BASELINE';
+  modelKind?: 'THRESHOLD_RULE' | 'STATISTICAL_ZSCORE' | 'HEURISTIC_HEALTH' | 'HEADROOM_RUL_ESTIMATE';
+  modelVersion?: string;
+  dataQualityScore?: number;
+  driftStatus?: 'NOMINAL' | 'ELEVATED_DRIFT' | 'INSUFFICIENT_HISTORY';
   recommendedAction: string;
   mode: DataOriginMode;
   computedAt: string;
+}
+
+export interface PredictiveBacktestResult {
+  assetId: string;
+  sampleCount: number;
+  anomalyAlertsEvaluated: number;
+  thresholdGroundTruthCount: number;
+  precision: number | null;
+  recall: number | null;
+  f1Score: number | null;
+  meanAbsoluteDrift: number;
+  dataQualityScore: number;
+  driftDetected: boolean;
+  calibrationNote: string;
 }
 
 export interface RootCauseInvestigation {
@@ -318,7 +412,7 @@ export interface RootCauseInvestigation {
   detectedIssue: string;
   supportingEvidence: Array<{ sourceType: string; recordId: string; summary: string }>;
   relatedAssetIds: string[];
-  potentialCauses: Array<{ cause: string; score: number; mechanism: string }>;
+  potentialCauses: Array<{ cause: string; score: number; mechanism: string; selectionReason?: string }>;
   alternativeExplanations: string[];
   confidence: number;
   uncertaintyNotes: string;
@@ -337,8 +431,17 @@ export interface AgentDefinition {
   purpose: string;
   authorizedTools: string[];
   maxSteps: number;
-  canActuatePhysicalControl: false; // Hard architectural boundary (Part 9)
+  canActuatePhysicalControl: false;
   capabilityState: CapabilityState;
+}
+
+export interface AgentTraceStep {
+  stepIndex: number;
+  toolName: string;
+  status: 'COMPLETED' | 'SKIPPED' | 'DENIED' | 'FAILED';
+  durationMs: number;
+  recordsRetrieved: number;
+  note?: string;
 }
 
 export interface AgentExecution {
@@ -353,6 +456,10 @@ export interface AgentExecution {
   evidenceRefs: string[];
   outputSummary: string;
   requiresApproval: boolean;
+  idempotencyKey?: string | null;
+  trace?: AgentTraceStep[];
+  conflictsDetected?: string[];
+  durationMs?: number;
   createdAt: string;
 }
 
@@ -402,9 +509,19 @@ export interface KnowledgeDocument {
 
 export interface BrainAnalysisResponse {
   query: string;
-  verifiedFacts: Array<{ claim: string; sourceId: string; module: string }>;
+  intent?: string;
+  verifiedFacts: Array<{
+    claim: string;
+    sourceId: string;
+    module: string;
+    dataMode?: DataOriginMode;
+    facilityId?: string | null;
+  }>;
+  rejectedCitations?: Array<{ claim: string; sourceId: string; reason: string }>;
   observations: string[];
   assumptionsAndHypotheses: string[];
+  predictions?: string[];
+  unknowns?: string[];
   recommendations: Array<{
     action: string;
     priority: SeverityLevel;
@@ -413,6 +530,8 @@ export interface BrainAnalysisResponse {
   }>;
   toolsCalled: string[];
   engineUsed: 'GEMINI_4_HYDROGEN' | 'DETERMINISTIC_CORE_FALLBACK';
+  modelId?: string;
+  latencyMs?: number;
   uncertaintyNote: string;
   createdAt: string;
 }

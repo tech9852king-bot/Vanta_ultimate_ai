@@ -6,8 +6,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { AgentDefinition } from '../core/types';
-import { hashPassword } from './security';
+import type { AgentDefinition } from '../core/types.ts';
+import { loadRuntimeConfig, type RuntimeConfig } from './config.ts';
+import { hashPassword } from './security.ts';
 
 export const VANTA_AGENTS: AgentDefinition[] = [
   {
@@ -132,8 +133,32 @@ export const VANTA_AGENTS: AgentDefinition[] = [
   },
 ];
 
-export function initDatabase(dbPath?: string): DatabaseSync {
-  const resolvedPath = dbPath || path.resolve(process.cwd(), '.vanta-data', 'vanta.db');
+function tableHasColumn(db: DatabaseSync, table: string, column: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return cols.some((c) => c.name === column);
+}
+
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, ddl: string): void {
+  if (!tableHasColumn(db, table, column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl};`);
+  }
+}
+
+export interface InitDatabaseOptions {
+  dbPath?: string;
+  allowDemoSeed?: boolean;
+  config?: RuntimeConfig;
+}
+
+export function initDatabase(dbPathOrOptions?: string | InitDatabaseOptions): DatabaseSync {
+  const opts: InitDatabaseOptions =
+    typeof dbPathOrOptions === 'string'
+      ? { dbPath: dbPathOrOptions }
+      : dbPathOrOptions || {};
+  const cfg = opts.config || loadRuntimeConfig();
+  const resolvedPath =
+    opts.dbPath || cfg.dbPath || path.resolve(process.cwd(), '.vanta-data', 'vanta.db');
+
   if (resolvedPath !== ':memory:') {
     fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
   }
@@ -141,6 +166,7 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   const db = new DatabaseSync(resolvedPath);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
+  db.exec('PRAGMA busy_timeout = 5000;');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS organizations (
@@ -459,14 +485,246 @@ export function initDatabase(dbPath?: string): DatabaseSync {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS session_records (
+      jti TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS evidence_provenance (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      facility_id TEXT,
+      asset_id TEXT,
+      source_module TEXT NOT NULL,
+      source_record_id TEXT NOT NULL,
+      data_mode TEXT NOT NULL,
+      processing_method TEXT NOT NULL,
+      model_version TEXT,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS digital_twin_snapshots (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      facility_id TEXT,
+      twin_version TEXT NOT NULL,
+      label TEXT NOT NULL,
+      asset_count INTEGER NOT NULL,
+      critical_asset_count INTEGER NOT NULL,
+      mean_health_score INTEGER NOT NULL,
+      state_summary_json TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS brain_runs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      facility_ids_json TEXT NOT NULL,
+      actor_email TEXT NOT NULL,
+      query TEXT NOT NULL,
+      intent TEXT NOT NULL,
+      engine_used TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      tools_called_json TEXT NOT NULL,
+      verified_facts_count INTEGER NOT NULL,
+      rejected_citations_count INTEGER NOT NULL,
+      latency_ms INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_assets_tenant ON assets(tenant_id, facility_id);
     CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_asset ON telemetry_points(tenant_id, asset_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_incidents_tenant ON incidents(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_records(tenant_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON session_records(user_id, tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_provenance_tenant ON evidence_provenance(tenant_id, facility_id);
   `);
 
-  seedDatabase(db);
+  runSchemaMigrations(db);
+
+  const shouldSeedDemo = opts.allowDemoSeed ?? cfg.allowDemoAuth;
+  if (shouldSeedDemo) {
+    seedDatabase(db);
+  }
   return db;
+}
+
+export function runSchemaMigrations(db: DatabaseSync): void {
+  const now = new Date().toISOString();
+  const isApplied = (v: string) =>
+    Boolean(db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(v));
+  const markApplied = (v: string, description: string) => {
+    db.prepare(
+      'INSERT OR IGNORE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)'
+    ).run(v, description, now);
+  };
+
+  if (!isApplied('001_initial_vanta_os')) {
+    markApplied('001_initial_vanta_os', 'Initial multi-tenant infrastructure data model');
+  }
+
+  if (!isApplied('002_phase2_zero_trust_provenance')) {
+    db.exec('BEGIN');
+    try {
+      addColumnIfMissing(db, 'users', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
+      addColumnIfMissing(db, 'users', 'token_version', 'INTEGER NOT NULL DEFAULT 1');
+
+      addColumnIfMissing(db, 'telemetry_points', 'facility_id', 'TEXT');
+      db.exec(`
+        UPDATE telemetry_points
+        SET facility_id = (SELECT a.facility_id FROM assets a WHERE a.id = telemetry_points.asset_id)
+        WHERE facility_id IS NULL;
+      `);
+
+      addColumnIfMissing(db, 'cameras', 'provider_type', "TEXT NOT NULL DEFAULT 'SAMPLE_BUFFER'");
+      addColumnIfMissing(db, 'cameras', 'capability_state', "TEXT NOT NULL DEFAULT 'SAMPLE_IMAGE'");
+      addColumnIfMissing(db, 'cameras', 'last_error', 'TEXT');
+      addColumnIfMissing(db, 'cameras', 'stream_health_pct', 'INTEGER NOT NULL DEFAULT 100');
+      db.exec(`
+        UPDATE cameras
+        SET provider_type = 'RTSP_EDGE',
+            capability_state = 'OFFLINE',
+            status = 'OFFLINE',
+            stream_health_pct = 0,
+            last_error = 'RTSP edge host unreachable from sandbox network; live video daemon not attached.'
+        WHERE stream_protocol = 'RTSP_EDGE';
+      `);
+
+      addColumnIfMissing(db, 'vision_events', 'capture_source', "TEXT NOT NULL DEFAULT 'SAMPLE_IMAGE'");
+
+      addColumnIfMissing(db, 'iot_integrations', 'latency_ms', 'INTEGER');
+      addColumnIfMissing(db, 'iot_integrations', 'consecutive_failures', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'iot_integrations', 'last_error', 'TEXT');
+      addColumnIfMissing(db, 'iot_integrations', 'credential_ref', 'TEXT');
+      db.exec(`
+        UPDATE iot_integrations
+        SET credential_ref = 'vault://ot/' || id
+        WHERE status = 'SIMULATED' AND credential_ref IS NULL;
+        UPDATE iot_integrations
+        SET status = 'NOT_CONFIGURED',
+            capability_state = 'NOT_CONFIGURED',
+            consecutive_failures = 3,
+            last_error = 'Missing vault credential reference or TLS client certificate.'
+        WHERE status = 'NOT_CONFIGURED';
+      `);
+
+      addColumnIfMissing(db, 'predictive_assessments', 'model_kind', "TEXT NOT NULL DEFAULT 'HEADROOM_RUL_ESTIMATE'");
+      addColumnIfMissing(db, 'predictive_assessments', 'model_version', "TEXT NOT NULL DEFAULT 'vanta-rul-heuristic-2.0'");
+      addColumnIfMissing(db, 'predictive_assessments', 'data_quality_score', 'INTEGER NOT NULL DEFAULT 85');
+      addColumnIfMissing(db, 'predictive_assessments', 'drift_status', "TEXT NOT NULL DEFAULT 'NOMINAL'");
+
+      addColumnIfMissing(db, 'agent_executions', 'idempotency_key', 'TEXT');
+      addColumnIfMissing(db, 'agent_executions', 'trace_json', "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(db, 'agent_executions', 'conflicts_json', "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(db, 'agent_executions', 'duration_ms', 'INTEGER NOT NULL DEFAULT 0');
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_telemetry_facility ON telemetry_points(tenant_id, facility_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_vision_facility ON vision_events(tenant_id, facility_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_events_facility ON events(tenant_id, facility_id, created_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_idempotency ON agent_executions(tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+      `);
+
+      markApplied(
+        '002_phase2_zero_trust_provenance',
+        'Zero-trust session revocation, facility telemetry indexes, camera capability states, provenance & twin snapshots'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  if (!isApplied('003_phase2_state_alignment')) {
+    db.exec('BEGIN');
+    try {
+      // Remove duplicate SIMULATED_BASELINE assessments keeping only the latest per (tenant_id, asset_id)
+      db.exec(`
+        DELETE FROM predictive_assessments
+        WHERE validation_status = 'SIMULATED_BASELINE'
+          AND id NOT IN (
+            SELECT id FROM (
+              SELECT id, ROW_NUMBER() OVER (PARTITION BY tenant_id, asset_id ORDER BY computed_at DESC) as rn
+              FROM predictive_assessments
+              WHERE validation_status = 'SIMULATED_BASELINE'
+            ) WHERE rn = 1
+          );
+      `);
+
+      // Align Phase I seed predictive methodologies with Phase II transparent validation statuses
+      db.exec(`
+        UPDATE predictive_assessments
+        SET validation_status = 'STATISTICAL_ZSCORE',
+            methodology = 'Linear Headroom Degradation + Statistical Z-Score (z=8.24)'
+        WHERE id = 'prd-1';
+
+        UPDATE predictive_assessments
+        SET validation_status = 'RULE_VERIFIED',
+            methodology = 'Threshold Envelope Drift + 40-day Maintenance Interval Model'
+        WHERE id = 'prd-2';
+      `);
+
+      // Ensure baseline Digital Twin snapshot exists if table was created on an already-seeded Phase I database
+      const hasOrg = db.prepare("SELECT id FROM organizations WHERE tenant_id = 'tenant-apex'").get();
+      if (hasOrg) {
+        const snapCount = (
+          db.prepare("SELECT COUNT(*) as cnt FROM digital_twin_snapshots WHERE tenant_id = 'tenant-apex'").get() as {
+            cnt: number;
+          }
+        ).cnt;
+        if (snapCount === 0) {
+          db.prepare(`
+            INSERT OR IGNORE INTO digital_twin_snapshots (id, tenant_id, facility_id, twin_version, label, asset_count, critical_asset_count, mean_health_score, state_summary_json, created_by, created_at)
+            VALUES (?, 'tenant-apex', NULL, 'vanta-twin-2.0', 'Initial Multi-Facility Baseline Snapshot', 11, 2, 86, ?, 'system@vanta.internal', ?)
+          `).run(
+            'twin-snap-1',
+            JSON.stringify([
+              { assetId: 'ast-cnc-04', code: 'CNC-04', status: 'CRITICAL', healthScore: 52, dataMode: 'MEASURED' },
+              { assetId: 'ast-chl-01', code: 'CHL-01', status: 'WARNING', healthScore: 61, dataMode: 'MEASURED' },
+              { assetId: 'ast-tx-t1', code: 'TX-138-T1', status: 'NOMINAL', healthScore: 94, dataMode: 'MEASURED' },
+            ]),
+            now
+          );
+        }
+
+        // Ensure at least one PENDING human approval is available for inspection in tenant-apex
+        const pendingApr = (
+          db
+            .prepare("SELECT COUNT(*) as cnt FROM approvals WHERE tenant_id = 'tenant-apex' AND status = 'PENDING'")
+            .get() as { cnt: number }
+        ).cnt;
+        if (pendingApr === 0) {
+          db.prepare(`
+            INSERT OR IGNORE INTO approvals (id, tenant_id, facility_id, target_type, target_id, title, justification, requested_by, risk_level, safety_boundary_check, status, decided_by, decision_notes, created_at, decided_at)
+            VALUES ('apr-202', 'tenant-apex', 'fac-plant-a', 'WORK_ORDER', 'wo-401', 'Authorize CNC-04 Spindle Bearing Inspection & CHL-01 Strainer Flush', 'Measured spindle bearing temperature (81.6°C) and RMS vibration (6.4 mm/s) require human-authorized LOTO maintenance window.', 'VANTA Predictive Agent', 'HIGH', 'PASSED — Lockout/Tagout & redundant loop PLC interlocks verified; human sign-off mandatory prior to maintenance isolation.', 'PENDING', NULL, NULL, ?, NULL)
+          `).run(now);
+        }
+      }
+
+      markApplied(
+        '003_phase2_state_alignment',
+        'Deduplicate simulated assessments, align predictive validation statuses, and ensure baseline twin snapshot'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
 }
 
 export function seedDatabase(db: DatabaseSync): void {
@@ -553,20 +811,20 @@ export function seedDatabase(db: DatabaseSync): void {
   insertRel.run('rel-8', 'tenant-apex', 'ast-ups-01', 'ast-rack-a30', 'POWERS', 1.0);
   insertRel.run('rel-9', 'tenant-apex', 'ast-crah-03', 'ast-rack-a30', 'COOLS', 0.94);
 
-  // 7. Cameras (using generated industrial camera frames)
+  // 7. Cameras (explicit capability_state distinguishing static sample buffers vs offline/unconfigured RTSP)
   const insertCam = db.prepare(`
-    INSERT INTO cameras (id, tenant_id, facility_id, zone_id, asset_id, name, stream_protocol, resolution, fps, status, mode, model_version, confidence_threshold, sample_image_url, privacy_policy, last_frame_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO cameras (id, tenant_id, facility_id, zone_id, asset_id, name, stream_protocol, provider_type, capability_state, resolution, fps, status, mode, model_version, confidence_threshold, sample_image_url, privacy_policy, stream_health_pct, last_frame_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertCam.run('cam-14', 'tenant-apex', 'fac-plant-a', 'zn-bay-4a', 'ast-cnc-04', 'CAM-14 · Assembly Bay 4A', 'ONVIF_SIMULATED', '2560x1920', 15, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.72, '/src/assets/images/cam_cnc_assembly_1794549731756.jpg', 'No biometric or facial recognition; zone & PPE compliance only.', hAgo(0.05));
-  insertCam.run('cam-12', 'tenant-apex', 'fac-sub-alpha', 'zn-yard-1', 'ast-tx-t1', 'CAM-12 · Substation Transformer Yard', 'ONVIF_SIMULATED', '2560x1920', 10, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.75, '/src/assets/images/cam_substation_yard_1794549731728.jpg', 'Perimeter & switchgear visual inspection; no personal identity tracking.', hAgo(0.1));
-  insertCam.run('cam-a30', 'tenant-apex', 'fac-dc-01', 'zn-aisle-a3', 'ast-rack-a30', 'CAM-A30 · Data Center Cold Aisle', 'RTSP_EDGE', '1920x1440', 10, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.78, '/src/assets/images/cam_datacenter_aisle_1794549731827.jpg', 'Rack door state & aisle clearance monitoring only.', hAgo(0.15));
-  insertCam.run('cam-c4', 'tenant-apex', 'fac-whse-west', 'zn-whse-c4', 'ast-agv-12', 'CAM-C4 · Warehouse AGV Corridor', 'WEBRTC_PROXY', '2560x1920', 20, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.70, '/src/assets/images/cam_warehouse_agv_1794549731009.jpg', 'AGV lane obstruction & forklift proximity monitoring.', hAgo(0.08));
+  insertCam.run('cam-14', 'tenant-apex', 'fac-plant-a', 'zn-bay-4a', 'ast-cnc-04', 'CAM-14 · Assembly Bay 4A', 'ONVIF_SIMULATED', 'SAMPLE_BUFFER', 'SAMPLE_IMAGE', '2560x1920', 15, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.72, '/src/assets/images/cam_cnc_assembly_1794549731756.jpg', 'No biometric or facial recognition; zone & PPE compliance only.', 100, hAgo(0.05));
+  insertCam.run('cam-12', 'tenant-apex', 'fac-sub-alpha', 'zn-yard-1', 'ast-tx-t1', 'CAM-12 · Substation Transformer Yard', 'ONVIF_SIMULATED', 'SAMPLE_BUFFER', 'SAMPLE_IMAGE', '2560x1920', 10, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.75, '/src/assets/images/cam_substation_yard_1794549731728.jpg', 'Perimeter & switchgear visual inspection; no personal identity tracking.', 100, hAgo(0.1));
+  insertCam.run('cam-a30', 'tenant-apex', 'fac-dc-01', 'zn-aisle-a3', 'ast-rack-a30', 'CAM-A30 · Data Center Cold Aisle', 'RTSP_EDGE', 'RTSP_EDGE', 'OFFLINE', '1920x1440', 10, 'OFFLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.78, '/src/assets/images/cam_datacenter_aisle_1794549731827.jpg', 'Rack door state & aisle clearance monitoring only.', 0, hAgo(0.15));
+  insertCam.run('cam-c4', 'tenant-apex', 'fac-whse-west', 'zn-whse-c4', 'ast-agv-12', 'CAM-C4 · Warehouse AGV Corridor', 'WEBRTC_PROXY', 'SAMPLE_BUFFER', 'SAMPLE_IMAGE', '2560x1920', 20, 'ONLINE', 'SIMULATED', 'vanta-vision-gemini-4h', 0.70, '/src/assets/images/cam_warehouse_agv_1794549731009.jpg', 'AGV lane obstruction & forklift proximity monitoring.', 100, hAgo(0.08));
 
   // 8. Seed Vision Event
   db.prepare(`
-    INSERT INTO vision_events (id, tenant_id, camera_id, facility_id, asset_id, event_type, severity, confidence, summary, detections_json, inference_engine, mode, evidence_image_url, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO vision_events (id, tenant_id, camera_id, facility_id, asset_id, event_type, severity, confidence, summary, detections_json, inference_engine, mode, capture_source, evidence_image_url, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     'vis-evt-1',
     'tenant-apex',
@@ -583,26 +841,27 @@ export function seedDatabase(db: DatabaseSync): void {
     ]),
     'RULE_BASED_EDGE',
     'SIMULATED',
+    'SAMPLE_IMAGE',
     '/src/assets/images/cam_cnc_assembly_1794549731756.jpg',
     hAgo(0.4)
   );
 
-  // 9. IoT Protocol Connectors
+  // 9. IoT Protocol Connectors (credential_ref only — zero plaintext secrets)
   const insertIoT = db.prepare(`
-    INSERT INTO iot_integrations (id, tenant_id, facility_id, name, protocol, endpoint, status, capability_state, polling_interval_ms, device_count, last_heartbeat_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO iot_integrations (id, tenant_id, facility_id, name, protocol, endpoint, status, capability_state, polling_interval_ms, device_count, latency_ms, consecutive_failures, credential_ref, last_heartbeat_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insertIoT.run('iot-opcua-1', 'tenant-apex', 'fac-plant-a', 'Plant A CNC OPC UA Gateway', 'OPC_UA', 'opc.tcp://gw-plant-a.internal:4840', 'SIMULATED', 'SIMULATED', 2000, 18, hAgo(0.02));
-  insertIoT.run('iot-mqtt-1', 'tenant-apex', 'fac-plant-a', 'Chiller & Vibration MQTT Broker', 'MQTT', 'mqtts://broker-west.internal:8883/vanta/#', 'SIMULATED', 'SIMULATED', 1000, 42, hAgo(0.02));
-  insertIoT.run('iot-modbus-1', 'tenant-apex', 'fac-sub-alpha', 'Substation Alpha DNP3/Modbus Bridge', 'MODBUS_TCP', 'modbus://rtu-sub138.internal:502', 'SIMULATED', 'SIMULATED', 5000, 14, hAgo(0.05));
-  insertIoT.run('iot-rest-1', 'tenant-apex', 'fac-dc-01', 'DC-01 BMS Telemetry Collector', 'REST_API', 'https://bms-dc01.internal/api/v2/metrics', 'SIMULATED', 'SIMULATED', 10000, 64, hAgo(0.08));
-  insertIoT.run('iot-ws-1', 'tenant-apex', 'fac-whse-west', 'AGV Fleet Telemetry Stream', 'WEBSOCKET', 'wss://fleet-whse.internal/telemetry', 'NOT_CONFIGURED', 'NOT_CONFIGURED', 1000, 0, hAgo(24));
-  insertIoT.run('iot-med-1', 'tenant-meridian', 'fac-med-utl', 'Meridian HVAC BACnet/MQTT Gateway', 'MQTT', 'mqtts://bms-meridian.internal:8883', 'SIMULATED', 'SIMULATED', 5000, 24, hAgo(0.05));
+  insertIoT.run('iot-opcua-1', 'tenant-apex', 'fac-plant-a', 'Plant A CNC OPC UA Gateway', 'OPC_UA', 'opc.tcp://gw-plant-a.internal:4840', 'SIMULATED', 'SIMULATED', 2000, 18, 12, 0, 'vault://ot/apex/opcua-plant-a', hAgo(0.02));
+  insertIoT.run('iot-mqtt-1', 'tenant-apex', 'fac-plant-a', 'Chiller & Vibration MQTT Broker', 'MQTT', 'mqtts://broker-west.internal:8883/vanta/#', 'SIMULATED', 'SIMULATED', 1000, 42, 8, 0, 'vault://ot/apex/mqtt-west', hAgo(0.02));
+  insertIoT.run('iot-modbus-1', 'tenant-apex', 'fac-sub-alpha', 'Substation Alpha DNP3/Modbus Bridge', 'MODBUS_TCP', 'modbus://rtu-sub138.internal:502', 'SIMULATED', 'SIMULATED', 5000, 14, 15, 0, 'vault://ot/apex/modbus-sub138', hAgo(0.05));
+  insertIoT.run('iot-rest-1', 'tenant-apex', 'fac-dc-01', 'DC-01 BMS Telemetry Collector', 'REST_API', 'https://bms-dc01.internal/api/v2/metrics', 'SIMULATED', 'SIMULATED', 10000, 64, 24, 0, 'vault://ot/apex/bms-dc01', hAgo(0.08));
+  insertIoT.run('iot-ws-1', 'tenant-apex', 'fac-whse-west', 'AGV Fleet Telemetry Stream', 'WEBSOCKET', 'wss://fleet-whse.internal/telemetry', 'NOT_CONFIGURED', 'NOT_CONFIGURED', 1000, 0, null, 3, null, hAgo(24));
+  insertIoT.run('iot-med-1', 'tenant-meridian', 'fac-med-utl', 'Meridian HVAC BACnet/MQTT Gateway', 'MQTT', 'mqtts://bms-meridian.internal:8883', 'SIMULATED', 'SIMULATED', 5000, 24, 14, 0, 'vault://ot/meridian/mqtt-bms', hAgo(0.05));
 
-  // 10. Telemetry Points (including realistic anomaly chain: Chiller CHL-01 -> CNC-04)
+  // 10. Telemetry Points (including facility_id and realistic anomaly chain: Chiller CHL-01 -> CNC-04)
   const insertTel = db.prepare(`
-    INSERT INTO telemetry_points (id, tenant_id, asset_id, metric_name, value, unit, threshold_warn, threshold_crit, z_score, is_anomaly, mode, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO telemetry_points (id, tenant_id, facility_id, asset_id, metric_name, value, unit, threshold_warn, threshold_crit, z_score, is_anomaly, mode, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const chillerTemps = [18.1, 18.3, 18.4, 19.2, 22.8, 26.4, 28.9];
   chillerTemps.forEach((v, i) => {
@@ -610,6 +869,7 @@ export function seedDatabase(db: DatabaseSync): void {
     insertTel.run(
       `tel-chl-${i}`,
       'tenant-apex',
+      'fac-plant-a',
       'ast-chl-01',
       'Coolant Supply Temp',
       v,
@@ -629,6 +889,7 @@ export function seedDatabase(db: DatabaseSync): void {
     insertTel.run(
       `tel-cnc-temp-${i}`,
       'tenant-apex',
+      'fac-plant-a',
       'ast-cnc-04',
       'Spindle Bearing Temp',
       v,
@@ -648,6 +909,7 @@ export function seedDatabase(db: DatabaseSync): void {
     insertTel.run(
       `tel-cnc-vib-${i}`,
       'tenant-apex',
+      'fac-plant-a',
       'ast-cnc-04',
       'Spindle RMS Vibration',
       v,
@@ -662,13 +924,13 @@ export function seedDatabase(db: DatabaseSync): void {
   });
 
   [31.2, 31.8, 32.4, 33.1, 32.9].forEach((v, i) => {
-    insertTel.run(`tel-tx-${i}`, 'tenant-apex', 'ast-tx-t1', 'Transformer Load', v, 'MVA', 38, 43, 0.3, 0, 'MEASURED', hAgo(4 - i));
+    insertTel.run(`tel-tx-${i}`, 'tenant-apex', 'fac-sub-alpha', 'ast-tx-t1', 'Transformer Load', v, 'MVA', 38, 43, 0.3, 0, 'MEASURED', hAgo(4 - i));
   });
   [1.24, 1.25, 1.24, 1.26, 1.25].forEach((v, i) => {
-    insertTel.run(`tel-dc-${i}`, 'tenant-apex', 'ast-rack-a30', 'Cluster PUE Ratio', v, 'PUE', 1.4, 1.6, 0.1, 0, 'SIMULATED', hAgo(4 - i));
+    insertTel.run(`tel-dc-${i}`, 'tenant-apex', 'fac-dc-01', 'ast-rack-a30', 'Cluster PUE Ratio', v, 'PUE', 1.4, 1.6, 0.1, 0, 'SIMULATED', hAgo(4 - i));
   });
   [6.9, 6.8, 7.0, 6.9].forEach((v, i) => {
-    insertTel.run(`tel-med-${i}`, 'tenant-meridian', 'ast-med-chl', 'Chilled Water Loop', v, '°C', 9.5, 12.0, 0.1, 0, 'SIMULATED', hAgo(3 - i));
+    insertTel.run(`tel-med-${i}`, 'tenant-meridian', 'fac-med-utl', 'ast-med-chl', 'Chilled Water Loop', v, '°C', 9.5, 12.0, 0.1, 0, 'SIMULATED', hAgo(3 - i));
   });
 
   // 11. Events & Incidents
@@ -846,4 +1108,26 @@ export function seedDatabase(db: DatabaseSync): void {
     INSERT INTO audit_records (id, tenant_id, actor_email, actor_role, action, resource_type, resource_id, outcome, details, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run('aud-1', 'tenant-apex', 'system@vanta.internal', 'Platform Administrator', 'SYSTEM_BOOTSTRAP', 'ORGANIZATION', 'tenant-apex', 'SUCCESS', 'Initialized tenant workspace, RBAC matrix, and deterministic asset topology.', hAgo(24));
+
+  // 19. Initial Digital Twin Snapshot & Provenance Links
+  db.prepare(`
+    INSERT INTO digital_twin_snapshots (id, tenant_id, facility_id, twin_version, label, asset_count, critical_asset_count, mean_health_score, state_summary_json, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'twin-snap-1',
+    'tenant-apex',
+    null,
+    'vanta-twin-2.0',
+    'Initial Multi-Facility Baseline Snapshot',
+    11,
+    2,
+    86,
+    JSON.stringify([
+      { assetId: 'ast-cnc-04', code: 'CNC-04', status: 'CRITICAL', healthScore: 52, dataMode: 'MEASURED' },
+      { assetId: 'ast-chl-01', code: 'CHL-01', status: 'WARNING', healthScore: 61, dataMode: 'MEASURED' },
+      { assetId: 'ast-tx-t1', code: 'TX-138-T1', status: 'NOMINAL', healthScore: 94, dataMode: 'MEASURED' },
+    ]),
+    'system@vanta.internal',
+    hAgo(0.5)
+  );
 }

@@ -1,19 +1,22 @@
 /**
  * VANTA AI — Pure Core Intelligence & Safety Rules Engine
- * Deterministic, side-effect-free engineering math, RBAC, RUL, energy, and RCA logic.
+ * Deterministic, side-effect-free engineering math, RBAC, RUL, backtesting, twin simulation, energy, and RCA logic.
  */
 
 import type {
   Asset,
   AssetRelationship,
+  AssetStatus,
   EnergyRecord,
   Incident,
   InfrastructureEvent,
   MaintenanceRecord,
+  PredictiveBacktestResult,
   SeverityLevel,
   TelemetryPoint,
+  TwinScenarioResult,
   VantaRole,
-} from './types';
+} from './types.ts';
 
 export interface AnomalyResult {
   mean: number;
@@ -89,12 +92,15 @@ export interface RulEstimationOutput {
   uncertaintyHours: number;
   failureMode: string;
   methodology: string;
+  modelKind: 'HEADROOM_RUL_ESTIMATE';
+  modelVersion: string;
   recommendedAction: string;
 }
 
 /**
  * Engineering-grade Remaining Useful Life (RUL) estimator combining threshold headroom,
  * degradation rate, and maintenance cycle utilization. Exposes explicit uncertainty.
+ * Note: Heuristic deterministic headroom model (NOT a trained ML regression model).
  */
 export function estimateRemainingUsefulLife(input: RulEstimationInput): RulEstimationOutput {
   const span = Math.max(input.criticalThreshold - input.nominalValue, 1);
@@ -104,7 +110,6 @@ export function estimateRemainingUsefulLife(input: RulEstimationInput): RulEstim
     input.hoursSinceLastMaintenance / Math.max(input.maintenanceIntervalHours, 1)
   );
 
-  // Compute remaining headroom in hours if degrading
   const headroom = Math.max(0, input.criticalThreshold - input.currentValue);
   let rulHours: number;
   if (input.recentSlopePerHour > 0.01) {
@@ -143,8 +148,103 @@ export function estimateRemainingUsefulLife(input: RulEstimationInput): RulEstim
     uncertaintyHours,
     failureMode,
     methodology:
-      'Linear Headroom Degradation + Maintenance Interval Utilization (Rule-Verified Statistical Model)',
+      'Linear Headroom Degradation + Maintenance Interval Utilization (Deterministic Engineering Heuristic)',
+    modelKind: 'HEADROOM_RUL_ESTIMATE',
+    modelVersion: 'vanta-rul-heuristic-2.0',
     recommendedAction,
+  };
+}
+
+/**
+ * Historical sliding-window backtest for statistical z-score detection vs threshold ground truth.
+ * Assesses precision, recall, F1, data quality completeness, and signal drift.
+ */
+export function evaluatePredictiveBacktest(
+  assetId: string,
+  pointsAscending: TelemetryPoint[]
+): PredictiveBacktestResult {
+  const sampleCount = pointsAscending.length;
+  if (sampleCount < 4) {
+    return {
+      assetId,
+      sampleCount,
+      anomalyAlertsEvaluated: 0,
+      thresholdGroundTruthCount: 0,
+      precision: null,
+      recall: null,
+      f1Score: null,
+      meanAbsoluteDrift: 0,
+      dataQualityScore: sampleCount === 0 ? 0 : 40,
+      driftDetected: false,
+      calibrationNote: 'Insufficient historical telemetry (< 4 samples) for statistical backtest calibration.',
+    };
+  }
+
+  let tp = 0;
+  let fp = 0;
+  let fn = 0;
+  let groundTruthCount = 0;
+  let alertsEvaluated = 0;
+  let validFiniteCount = 0;
+  let absDriftSum = 0;
+
+  const nominalSeed = pointsAscending.slice(0, 3).map((p) => p.value);
+  const initialMean = nominalSeed.reduce((a, b) => a + b, 0) / nominalSeed.length;
+
+  for (let i = 0; i < sampleCount; i++) {
+    const pt = pointsAscending[i];
+    if (Number.isFinite(pt.value)) {
+      validFiniteCount += 1;
+      absDriftSum += Math.abs(pt.value - initialMean);
+    }
+    if (i < 3) continue;
+
+    const window = pointsAscending.slice(Math.max(0, i - 5), i).map((p) => p.value);
+    const pred = computeZScoreAnomaly(window, pt.value, pt.thresholdWarn, pt.thresholdCrit);
+    const actualBreach = pt.value >= pt.thresholdWarn;
+
+    if (actualBreach) groundTruthCount += 1;
+    if (pred.isAnomaly) alertsEvaluated += 1;
+
+    if (pred.isAnomaly && actualBreach) tp += 1;
+    else if (pred.isAnomaly && !actualBreach) fp += 1;
+    else if (!pred.isAnomaly && actualBreach) fn += 1;
+  }
+
+  const precision = tp + fp > 0 ? Number((tp / (tp + fp)).toFixed(2)) : null;
+  const recall = tp + fn > 0 ? Number((tp / (tp + fn)).toFixed(2)) : null;
+  const f1Score =
+    precision !== null && recall !== null && precision + recall > 0
+      ? Number(((2 * precision * recall) / (precision + recall)).toFixed(2))
+      : null;
+
+  const meanAbsoluteDrift = Number((absDriftSum / sampleCount).toFixed(2));
+  const completenessRatio = validFiniteCount / sampleCount;
+  const measuredRatio =
+    pointsAscending.filter((p) => p.mode === 'MEASURED').length / sampleCount;
+  const dataQualityScore = Math.round(completenessRatio * 70 + measuredRatio * 30);
+
+  const recentMean =
+    pointsAscending.slice(-3).reduce((acc, p) => acc + p.value, 0) /
+    Math.min(3, sampleCount);
+  const driftDetected =
+    Math.abs(recentMean - initialMean) > Math.max(Math.abs(initialMean) * 0.12, 1.5);
+
+  return {
+    assetId,
+    sampleCount,
+    anomalyAlertsEvaluated: alertsEvaluated,
+    thresholdGroundTruthCount: groundTruthCount,
+    precision,
+    recall,
+    f1Score,
+    meanAbsoluteDrift,
+    dataQualityScore,
+    driftDetected,
+    calibrationNote:
+      measuredRatio === 1
+        ? 'Backtest evaluated exclusively on MEASURED telemetry points against warning thresholds.'
+        : `Backtest includes ${Math.round((1 - measuredRatio) * 100)}% SIMULATED/ESTIMATED samples; do not equate to field ML validation.`,
   };
 }
 
@@ -159,6 +259,18 @@ export interface EnergySummary {
   baselineDeltaPct: number | null;
   savingsClaimPermitted: boolean;
   methodologyNote: string;
+  byFacility: Array<{
+    facilityId: string;
+    measuredKwh: number;
+    estimatedOrSimulatedKwh: number;
+    peakDemandKw: number;
+  }>;
+  byEquipment: Array<{
+    assetId: string;
+    measuredKwh: number;
+    estimatedOrSimulatedKwh: number;
+    mode: string;
+  }>;
 }
 
 /**
@@ -173,6 +285,15 @@ export function computeEnergySummary(records: EnergyRecord[]): EnergySummary {
   let peakDemandKw = 0;
   let pfSum = 0;
 
+  const facilityMap = new Map<
+    string,
+    { facilityId: string; measuredKwh: number; estimatedOrSimulatedKwh: number; peakDemandKw: number }
+  >();
+  const assetMap = new Map<
+    string,
+    { assetId: string; measuredKwh: number; estimatedOrSimulatedKwh: number; mode: string }
+  >();
+
   for (const r of records) {
     if (r.mode === 'MEASURED') {
       measuredKwh += r.consumptionKwh;
@@ -186,12 +307,34 @@ export function computeEnergySummary(records: EnergyRecord[]): EnergySummary {
       peakDemandKw = r.peakDemandKw;
     }
     pfSum += r.powerFactor;
+
+    const fEntry = facilityMap.get(r.facilityId) || {
+      facilityId: r.facilityId,
+      measuredKwh: 0,
+      estimatedOrSimulatedKwh: 0,
+      peakDemandKw: 0,
+    };
+    if (r.mode === 'MEASURED') fEntry.measuredKwh += r.consumptionKwh;
+    else fEntry.estimatedOrSimulatedKwh += r.consumptionKwh;
+    fEntry.peakDemandKw = Math.max(fEntry.peakDemandKw, r.peakDemandKw);
+    facilityMap.set(r.facilityId, fEntry);
+
+    if (r.assetId) {
+      const aEntry = assetMap.get(r.assetId) || {
+        assetId: r.assetId,
+        measuredKwh: 0,
+        estimatedOrSimulatedKwh: 0,
+        mode: r.mode,
+      };
+      if (r.mode === 'MEASURED') aEntry.measuredKwh += r.consumptionKwh;
+      else aEntry.estimatedOrSimulatedKwh += r.consumptionKwh;
+      assetMap.set(r.assetId, aEntry);
+    }
   }
 
   const totalKwh = Number((measuredKwh + estimatedKwh + simulatedKwh).toFixed(1));
   const avgPowerFactor = records.length > 0 ? Number((pfSum / records.length).toFixed(3)) : 0;
 
-  // Baseline comparison is strictly permitted only when measured data & baseline exist
   const savingsClaimPermitted = measuredKwh > 0 && measuredBaselineKwh > 0;
   const baselineDeltaPct = savingsClaimPermitted
     ? Number((((measuredKwh - measuredBaselineKwh) / measuredBaselineKwh) * 100).toFixed(1))
@@ -210,20 +353,99 @@ export function computeEnergySummary(records: EnergyRecord[]): EnergySummary {
     methodologyNote: savingsClaimPermitted
       ? 'Delta computed strictly against verified MEASURED meter baseline.'
       : 'Insufficient verified MEASURED baseline records; financial savings claims withheld.',
+    byFacility: Array.from(facilityMap.values()),
+    byEquipment: Array.from(assetMap.values()),
+  };
+}
+
+/**
+ * Deterministic graph-traversal scenario simulation for Digital Twin what-if analysis.
+ * Strictly read-only / SIMULATED — never mutates live physical or database state.
+ */
+export function simulateTwinCascade(
+  seedAssetId: string,
+  scenarioType: 'ASSET_OFFLINE' | 'COOLING_DEGRADATION' | 'POWER_LOSS',
+  assets: Asset[],
+  relationships: AssetRelationship[]
+): TwinScenarioResult {
+  const assetMap = new Map(assets.map((a) => [a.id, a]));
+  const visited = new Set<string>([seedAssetId]);
+  const queue: Array<{ id: string; hop: number; viaType: string; weight: number }> = [];
+
+  for (const rel of relationships) {
+    if (rel.sourceAssetId === seedAssetId && rel.relationshipType !== 'MONITORS') {
+      queue.push({
+        id: rel.targetAssetId,
+        hop: 1,
+        viaType: rel.relationshipType,
+        weight: rel.criticalityWeight,
+      });
+    }
+  }
+
+  const affectedAssets: TwinScenarioResult['affectedAssets'] = [];
+  let maxDepth = 0;
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current.id)) continue;
+    visited.add(current.id);
+
+    const targetAsset = assetMap.get(current.id);
+    if (!targetAsset) continue;
+
+    maxDepth = Math.max(maxDepth, current.hop);
+    const severityMultiplier =
+      scenarioType === 'POWER_LOSS' ? 42 : scenarioType === 'ASSET_OFFLINE' ? 35 : 28;
+    const projectedHealthDelta = -Math.round((severityMultiplier * current.weight) / current.hop);
+    const newProjectedHealth = Math.max(15, targetAsset.healthScore + projectedHealthDelta);
+    const projectedStatus: AssetStatus =
+      newProjectedHealth < 55 ? 'CRITICAL' : newProjectedHealth < 78 ? 'WARNING' : targetAsset.status;
+
+    affectedAssets.push({
+      assetId: targetAsset.id,
+      code: targetAsset.code,
+      name: targetAsset.name,
+      hopDistance: current.hop,
+      impactType: `${current.viaType} cascade (weight ${current.weight})`,
+      projectedStatus,
+      projectedHealthDelta,
+    });
+
+    for (const rel of relationships) {
+      if (rel.sourceAssetId === current.id && rel.relationshipType !== 'MONITORS' && !visited.has(rel.targetAssetId)) {
+        queue.push({
+          id: rel.targetAssetId,
+          hop: current.hop + 1,
+          viaType: rel.relationshipType,
+          weight: rel.criticalityWeight,
+        });
+      }
+    }
+  }
+
+  return {
+    seedAssetId,
+    scenarioType,
+    affectedAssets,
+    cascadeDepth: maxDepth,
+    mode: 'SIMULATED',
+    disclaimer:
+      'SIMULATED graph propagation model. Does not mutate live asset telemetry or trigger physical actuation.',
   };
 }
 
 export interface RootCauseCorrelationResult {
   relatedAssetIds: string[];
-  potentialCauses: Array<{ cause: string; score: number; mechanism: string }>;
+  potentialCauses: Array<{ cause: string; score: number; mechanism: string; selectionReason: string }>;
   alternativeExplanations: string[];
   confidence: number;
   uncertaintyNotes: string;
 }
 
 /**
- * Correlates an incident with asset dependency graph, anomalous telemetry, recent events,
- * and maintenance history to produce ranked, explainable root cause candidates.
+ * Correlates an incident with asset dependency graph, temporal precedence, anomalous telemetry,
+ * recent events, and maintenance history. Explicitly avoids presenting correlation as proof of causation.
  */
 export function correlateRootCauseEvidence(
   incident: Incident,
@@ -238,36 +460,49 @@ export function correlateRootCauseEvidence(
   const relatedIds = new Set<string>();
   if (targetAssetId) relatedIds.add(targetAssetId);
 
-  // Traverse upstream and downstream dependency edges (1 hop)
-  const upstreamDeps: AssetRelationship[] = [];
   for (const rel of relationships) {
     if (rel.targetAssetId === targetAssetId) {
       relatedIds.add(rel.sourceAssetId);
-      upstreamDeps.push(rel);
     } else if (rel.sourceAssetId === targetAssetId) {
       relatedIds.add(rel.targetAssetId);
     }
   }
 
-  const candidateCauses: Array<{ cause: string; score: number; mechanism: string }> = [];
+  const candidateCauses: Array<{
+    cause: string;
+    score: number;
+    mechanism: string;
+    selectionReason: string;
+  }> = [];
 
-  // 1. Check anomalous telemetry on target or upstream assets
+  const targetFirstAnom = telemetry
+    .filter((t) => t.isAnomaly && t.assetId === targetAssetId)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())[0];
+
   const relevantAnomalies = telemetry.filter(
     (t) => t.isAnomaly && (relatedIds.has(t.assetId) || t.assetId === targetAssetId)
   );
   for (const anom of relevantAnomalies) {
     const assetName = assetMap.get(anom.assetId)?.name ?? anom.assetId;
     const isUpstream = anom.assetId !== targetAssetId;
+    const precededTarget =
+      isUpstream &&
+      targetFirstAnom &&
+      new Date(anom.timestamp).getTime() <= new Date(targetFirstAnom.timestamp).getTime();
+
+    const baseScore = 55 + Math.abs(anom.zScore) * 9 + (isUpstream ? 8 : 0) + (precededTarget ? 7 : 0);
     candidateCauses.push({
       cause: `${assetName}: ${anom.metricName} excursion (${anom.value} ${anom.unit}, z=${anom.zScore})`,
-      score: Math.min(95, Math.round(55 + Math.abs(anom.zScore) * 10 + (isUpstream ? 8 : 0))),
+      score: Math.min(95, Math.round(baseScore)),
       mechanism: isUpstream
-        ? `Upstream dependency anomaly propagating along asset graph to ${assetMap.get(targetAssetId ?? '')?.name ?? 'target asset'}.`
-        : `Direct equipment operating parameter exceeded threshold (${anom.thresholdWarn} ${anom.unit}).`,
+        ? `Upstream dependency anomaly correlated along asset graph to ${assetMap.get(targetAssetId ?? '')?.name ?? 'target asset'}.`
+        : `Direct equipment operating parameter exceeded warning threshold (${anom.thresholdWarn} ${anom.unit}).`,
+      selectionReason: precededTarget
+        ? `Selected because upstream excursion occurred at ${anom.timestamp} (preceding/coincident with target anomaly) on a directed dependency edge.`
+        : `Selected due to high statistical z-score deviation (|z|=${Math.abs(anom.zScore)}) in correlated asset scope.`,
     });
   }
 
-  // 2. Check recent high-severity events on related assets
   const relevantEvents = events.filter(
     (e) =>
       (e.severity === 'CRITICAL' || e.severity === 'HIGH') &&
@@ -279,34 +514,36 @@ export function correlateRootCauseEvidence(
       cause: `Correlated ${topEvent.sourceModule} event: ${topEvent.title}`,
       score: 72,
       mechanism: topEvent.description,
+      selectionReason: `Selected due to high-severity event overlap in facility ${topEvent.facilityId} (${topEvent.mode} stream).`,
     });
   }
 
-  // 3. Check corrective maintenance gaps
   const targetMaint = maintenance.filter((m) => m.assetId === targetAssetId);
   if (targetMaint.length === 0 && targetAssetId) {
     candidateCauses.push({
       cause: 'Deferred preventive maintenance interval / missing recent inspection baseline',
       score: 48,
       mechanism: 'No maintenance logs recorded in current inspection cycle for target asset.',
+      selectionReason: 'Selected due to zero maintenance log entries for target asset in scoped history.',
     });
   }
 
-  // Deduplicate and sort descending
-  const sortedCauses = candidateCauses
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 4);
+  const sortedCauses = candidateCauses.sort((a, b) => b.score - a.score).slice(0, 4);
 
   if (sortedCauses.length === 0) {
     sortedCauses.push({
       cause: 'Localized operational disturbance without correlated upstream telemetry excursion',
       score: 40,
       mechanism: 'Available sensor channels remained within statistical bounds; physical inspection required.',
+      selectionReason: 'Fallback hypothesis generated because no statistical anomaly or upstream fault was observed.',
     });
   }
 
   const hasMeasuredTelemetry = telemetry.some((t) => relatedIds.has(t.assetId) && t.mode === 'MEASURED');
-  const confidence = Math.min(92, Math.max(35, Math.round(sortedCauses[0].score * (hasMeasuredTelemetry ? 0.95 : 0.8))));
+  const confidence = Math.min(
+    90,
+    Math.max(35, Math.round(sortedCauses[0].score * (hasMeasuredTelemetry ? 0.92 : 0.78)))
+  );
 
   return {
     relatedAssetIds: Array.from(relatedIds),
@@ -317,8 +554,8 @@ export function correlateRootCauseEvidence(
     ],
     confidence,
     uncertaintyNotes: hasMeasuredTelemetry
-      ? 'Correlation derived from measured telemetry, dependency graph, and event timeline.'
-      : 'Partial uncertainty: includes SIMULATED/ESTIMATED telemetry channels; verify physically on site.',
+      ? 'Statistical & temporal correlation only — NOT proof of physical causation. On-site technician verification required.'
+      : 'Partial uncertainty: includes SIMULATED/ESTIMATED telemetry channels; correlation requires physical verification.',
   };
 }
 
@@ -332,6 +569,7 @@ export type PermissionAction =
   | 'APPROVE_CONSEQUENTIAL_ACTION'
   | 'MANAGE_ASSETS_IOT'
   | 'MANAGE_TENANTS_USERS'
+  | 'MANAGE_BACKUPS'
   | 'BYPASS_SAFETY_INTERLOCK';
 
 const ROLE_PERMISSIONS: Record<VantaRole, Set<PermissionAction>> = {
@@ -345,6 +583,7 @@ const ROLE_PERMISSIONS: Record<VantaRole, Set<PermissionAction>> = {
     'APPROVE_CONSEQUENTIAL_ACTION',
     'MANAGE_ASSETS_IOT',
     'MANAGE_TENANTS_USERS',
+    'MANAGE_BACKUPS',
   ]),
   'Organization Administrator': new Set([
     'VIEW_PLATFORM',
@@ -356,6 +595,7 @@ const ROLE_PERMISSIONS: Record<VantaRole, Set<PermissionAction>> = {
     'APPROVE_CONSEQUENTIAL_ACTION',
     'MANAGE_ASSETS_IOT',
     'MANAGE_TENANTS_USERS',
+    'MANAGE_BACKUPS',
   ]),
   'Facility Administrator': new Set([
     'VIEW_PLATFORM',

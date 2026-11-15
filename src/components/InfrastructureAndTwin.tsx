@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Plus, Zap, Activity } from 'lucide-react';
+import { Plus, Zap, Activity, RefreshCw, Camera, Play } from 'lucide-react';
 import { vantaApi } from '../api/client';
+import type { TwinScenarioResult } from '../core/types';
 import type { WorkspaceData } from '../types/workspace';
 import { ModuleHeader, StatusText, TelemetryChart } from './StatusText';
 
@@ -9,7 +10,7 @@ export function InfrastructureView({ data }: { data: WorkspaceData }) {
     <div className="space-y-6">
       <ModuleHeader
         title="Infrastructure Hierarchy"
-        subtitle="Multi-site, facility, building, and operational zone topology across all authorized industry sectors."
+        subtitle="Multi-site, facility, building, and operational zone topology across authorized facilities."
         capability="FUNCTIONAL"
         dataMode="MEASURED"
       />
@@ -94,6 +95,14 @@ export function AssetIntelligenceView({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const effectiveFacilityId = data.facilities.some((f) => f.id === facilityId)
+    ? facilityId
+    : data.facilities[0]?.id || '';
+  const availableZones = data.zones.filter((z) => !effectiveFacilityId || z.facilityId === effectiveFacilityId);
+  const effectiveZoneId = availableZones.some((z) => z.id === zoneId)
+    ? zoneId
+    : availableZones[0]?.id || data.zones[0]?.id || '';
+
   const filtered = data.assets.filter(
     (a) =>
       a.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -107,8 +116,8 @@ export function AssetIntelligenceView({
     setSubmitting(true);
     try {
       await vantaApi.createAsset({
-        facilityId,
-        zoneId,
+        facilityId: effectiveFacilityId,
+        zoneId: effectiveZoneId,
         code,
         name,
         assetType,
@@ -174,14 +183,14 @@ export function AssetIntelligenceView({
             </div>
             <div>
               <label htmlFor="ast-fac" className="block text-xs text-slate-400 mb-1">Facility</label>
-              <select id="ast-fac" value={facilityId} onChange={(e) => setFacilityId(e.target.value)} className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
+              <select id="ast-fac" value={effectiveFacilityId} onChange={(e) => setFacilityId(e.target.value)} className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
                 {data.facilities.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </div>
             <div>
               <label htmlFor="ast-zone" className="block text-xs text-slate-400 mb-1">Zone</label>
-              <select id="ast-zone" value={zoneId} onChange={(e) => setZoneId(e.target.value)} className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
-                {data.zones.map((z) => <option key={z.id} value={z.id}>{z.zoneName}</option>)}
+              <select id="ast-zone" value={effectiveZoneId} onChange={(e) => setZoneId(e.target.value)} className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100">
+                {(availableZones.length > 0 ? availableZones : data.zones).map((z) => <option key={z.id} value={z.id}>{z.zoneName}</option>)}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -257,19 +266,42 @@ export function IoTTelemetryView({
 }) {
   const [selectedAssetId, setSelectedAssetId] = useState(data.assets[0]?.id || '');
   const [simLoading, setSimLoading] = useState(false);
+  const [probingId, setProbingId] = useState<string | null>(null);
   const [simNotice, setSimNotice] = useState<string | null>(null);
 
+  const effectiveAssetId = data.assets.some((a) => a.id === selectedAssetId)
+    ? selectedAssetId
+    : data.assets[0]?.id || '';
+
   const assetPoints = data.telemetry
-    .filter((t) => t.assetId === selectedAssetId)
+    .filter((t) => t.assetId === effectiveAssetId)
     .slice(0, 12)
     .reverse();
 
+  const handleProbeConnector = async (connectorId: string) => {
+    setProbingId(connectorId);
+    setSimNotice(null);
+    try {
+      const res = await vantaApi.probeIotConnector(connectorId);
+      setSimNotice(
+        `Connector ${res.connectorId} (${res.protocol}) probe -> ${res.status}${
+          res.latencyMs !== null ? ` (${res.latencyMs}ms)` : ''
+        }${res.lastError ? ` · ${res.lastError}` : ''}`
+      );
+      onRefresh();
+    } catch (err) {
+      setSimNotice(err instanceof Error ? err.message : 'Connector probe failed.');
+    } finally {
+      setProbingId(null);
+    }
+  };
+
   const handleSimulate = async (scenario: 'NOMINAL_SAMPLE' | 'THERMAL_SPIKE' | 'VIBRATION_FAULT') => {
-    if (!selectedAssetId) return;
+    if (!effectiveAssetId) return;
     setSimLoading(true);
     setSimNotice(null);
     try {
-      const res = (await vantaApi.simulateTelemetry(selectedAssetId, scenario)) as {
+      const res = (await vantaApi.simulateTelemetry(effectiveAssetId, scenario)) as {
         value: number;
         unit: string;
         anomaly: { zScore: number; severity: string };
@@ -289,7 +321,7 @@ export function IoTTelemetryView({
     <div className="space-y-6">
       <ModuleHeader
         title="Industrial IoT & Telemetry Console"
-        subtitle="Protocol adapter framework (MQTT, OPC UA, Modbus TCP, REST, WebSocket) with statistical anomaly detection and explicit simulation sandbox."
+        subtitle="Protocol adapter framework (MQTT, OPC UA, Modbus TCP, REST, WebSocket) with live health probing, statistical anomaly detection, and explicit simulation sandbox."
         capability="SIMULATED"
         dataMode="MIXED"
       />
@@ -298,7 +330,7 @@ export function IoTTelemetryView({
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
         <div className="px-5 py-3.5 border-b border-[#1E293B] flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-100">Industrial Protocol Gateways</h2>
-          <span className="text-xs font-mono text-sky-400">Explicit Hardware Simulation Mode</span>
+          <span className="text-xs font-mono text-sky-400">Simulated Adapters vs Unconfigured Endpoints</span>
         </div>
         <table className="w-full text-left border-collapse">
           <thead>
@@ -306,18 +338,35 @@ export function IoTTelemetryView({
               <th className="py-3 px-4">Connector</th>
               <th className="py-3 px-4">Protocol</th>
               <th className="py-3 px-4">Endpoint</th>
-              <th className="py-3 px-4 text-right">Devices</th>
+              <th className="py-3 px-4 text-right">Latency</th>
               <th className="py-3 px-4">State</th>
+              <th className="py-3 px-4 text-right">Probe</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1E293B] text-xs">
             {data.iotIntegrations.map((iot) => (
               <tr key={iot.id} className="hover:bg-[#161E2E]/60">
-                <td className="py-3 px-4 font-medium text-slate-100">{iot.name}</td>
+                <td className="py-3 px-4">
+                  <div className="font-medium text-slate-100">{iot.name}</div>
+                  {iot.lastError && <div className="text-[11px] font-mono text-amber-300 mt-0.5">{iot.lastError}</div>}
+                </td>
                 <td className="py-3 px-4 font-mono text-slate-300">{iot.protocol}</td>
                 <td className="py-3 px-4 font-mono text-slate-400">{iot.endpoint}</td>
-                <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-200">{iot.deviceCount}</td>
+                <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-300">
+                  {iot.latencyMs != null ? `${iot.latencyMs}ms` : 'N/A'}
+                </td>
                 <td className="py-3 px-4"><StatusText value={iot.capabilityState} /></td>
+                <td className="py-3 px-4 text-right">
+                  <button
+                    type="button"
+                    disabled={probingId === iot.id}
+                    onClick={() => handleProbeConnector(iot.id)}
+                    className="px-2.5 py-1 rounded border border-[#243044] hover:border-sky-500 text-[11px] font-mono text-slate-200 inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    {probingId === iot.id ? 'Probing...' : 'Probe'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -337,7 +386,7 @@ export function IoTTelemetryView({
             </label>
             <select
               id="sim-asset-select"
-              value={selectedAssetId}
+              value={effectiveAssetId}
               onChange={(e) => setSelectedAssetId(e.target.value)}
               className="w-full px-3 py-2 rounded-md bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
             >
@@ -407,16 +456,28 @@ export function IoTTelemetryView({
   );
 }
 
-export function DigitalTwinView({ data }: { data: WorkspaceData }) {
+export function DigitalTwinView({
+  data,
+  selectedFacilityId = 'ALL',
+  onRefresh,
+}: {
+  data: WorkspaceData;
+  selectedFacilityId?: string;
+  onRefresh?: () => void;
+}) {
   const [selectedId, setSelectedId] = useState(
     data.assets.find((a) => a.status === 'CRITICAL')?.id || data.assets[0]?.id || ''
   );
+  const [scenarioType, setScenarioType] = useState<'ASSET_OFFLINE' | 'COOLING_DEGRADATION' | 'POWER_LOSS'>('COOLING_DEGRADATION');
+  const [scenarioResult, setScenarioResult] = useState<TwinScenarioResult | null>(null);
+  const [twinNotice, setTwinNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
   const selectedAsset = data.assets.find((a) => a.id === selectedId) || data.assets[0];
   const assetTelemetry = data.telemetry.filter((t) => selectedAsset && t.assetId === selectedAsset.id).slice(0, 6);
   const incomingEdges = data.relationships.filter((r) => selectedAsset && r.targetAssetId === selectedAsset.id);
   const outgoingEdges = data.relationships.filter((r) => selectedAsset && r.sourceAssetId === selectedAsset.id);
 
-  // Deterministic spacious layout in 800x460 canvas coordinates so nodes and labels never collide
   const layoutCoords = new Map<string, { x: number; y: number }>();
   const presetPositions: Record<string, { x: number; y: number }> = {
     'ast-tx-t1': { x: 110, y: 110 },
@@ -447,14 +508,59 @@ export function DigitalTwinView({ data }: { data: WorkspaceData }) {
 
   const assetMap = new Map(data.assets.map((a) => [a.id, a]));
 
+  const handleCaptureSnapshot = async () => {
+    setBusy(true);
+    setTwinNotice(null);
+    try {
+      const res = (await vantaApi.captureTwinSnapshot(selectedFacilityId)) as { twinVersion?: string; meanHealthScore?: number };
+      setTwinNotice(`Captured versioned Digital Twin snapshot ${res.twinVersion || ''} (mean health ${res.meanHealthScore ?? 0}%).`);
+      onRefresh?.();
+    } catch (err) {
+      setTwinNotice(err instanceof Error ? err.message : 'Snapshot capture failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRunCascade = async () => {
+    if (!selectedAsset) return;
+    setBusy(true);
+    setTwinNotice(null);
+    try {
+      const res = await vantaApi.simulateTwinScenario(selectedAsset.id, scenarioType);
+      setScenarioResult(res);
+    } catch (err) {
+      setTwinNotice(err instanceof Error ? err.message : 'Cascade simulation failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <ModuleHeader
-        title="VANTA Digital Twin — Asset Dependency Topology"
-        subtitle="Asset-centric operational state model linking spatial node positions, directed dependency edges (POWERS, COOLS, FEEDS), and synchronized telemetry."
+        title="VANTA Digital Twin — Asset Dependency Topology & Cascade Simulator"
+        subtitle="Versioned infrastructure state snapshots and read-only dependency cascade simulation synchronized with SQLite telemetry."
         capability="PARTIALLY_FUNCTIONAL"
         dataMode="MIXED"
+        actions={
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleCaptureSnapshot}
+            className="px-3.5 py-2 rounded-md bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-xs font-medium text-white flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            Capture Twin Snapshot
+          </button>
+        }
       />
+
+      {twinNotice && (
+        <div className="px-4 py-2.5 rounded-md bg-[#111827] border border-sky-800/60 text-xs font-mono text-sky-200">
+          {twinNotice}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Interactive Spatial Graph Canvas */}
@@ -476,7 +582,6 @@ export function DigitalTwinView({ data }: { data: WorkspaceData }) {
               </defs>
               <rect width="800" height="460" fill="url(#twin-grid)" />
 
-              {/* Dependency Edges */}
               {data.relationships.map((rel) => {
                 const srcPos = layoutCoords.get(rel.sourceAssetId);
                 const dstPos = layoutCoords.get(rel.targetAssetId);
@@ -518,7 +623,6 @@ export function DigitalTwinView({ data }: { data: WorkspaceData }) {
                 );
               })}
 
-              {/* Asset Nodes */}
               {data.assets.map((asset) => {
                 const pos = layoutCoords.get(asset.id);
                 if (!pos) return null;
@@ -579,7 +683,7 @@ export function DigitalTwinView({ data }: { data: WorkspaceData }) {
           </div>
         </div>
 
-        {/* Selected Twin Node Inspector */}
+        {/* Selected Twin Node Inspector + Cascade Simulation */}
         <div className="lg:col-span-4 bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
           {selectedAsset ? (
             <>
@@ -643,6 +747,45 @@ export function DigitalTwinView({ data }: { data: WorkspaceData }) {
               </div>
 
               <div className="space-y-2 text-xs pt-2 border-t border-[#1E293B]">
+                <div className="font-medium text-slate-300">What-If Cascade Simulation (Read-Only)</div>
+                <div className="flex gap-2">
+                  <select
+                    aria-label="Cascade scenario type"
+                    value={scenarioType}
+                    onChange={(e) => setScenarioType(e.target.value as typeof scenarioType)}
+                    className="flex-1 px-2.5 py-1.5 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
+                  >
+                    <option value="COOLING_DEGRADATION">COOLING_DEGRADATION</option>
+                    <option value="POWER_LOSS">POWER_LOSS</option>
+                    <option value="ASSET_OFFLINE">ASSET_OFFLINE</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleRunCascade}
+                    className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-xs font-medium text-white flex items-center gap-1 whitespace-nowrap"
+                  >
+                    <Play className="w-3 h-3" />
+                    Simulate
+                  </button>
+                </div>
+                {scenarioResult && (
+                  <div className="p-2.5 rounded bg-[#0B0F17] border border-[#1E293B] space-y-1.5">
+                    <div className="font-mono text-[11px] text-amber-300">
+                      SIMULATED · Depth {scenarioResult.cascadeDepth} · {scenarioResult.affectedAssets.length} impacted
+                    </div>
+                    {scenarioResult.affectedAssets.map((a) => (
+                      <div key={a.assetId} className="flex items-center justify-between font-mono text-[11px]">
+                        <span className="text-slate-200">{a.code} (hop {a.hopDistance})</span>
+                        <span className="text-rose-400">{a.projectedStatus} ({a.projectedHealthDelta}%)</span>
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-slate-500">{scenarioResult.disclaimer}</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 text-xs pt-2 border-t border-[#1E293B]">
                 <div className="font-medium text-slate-300">Synchronized Telemetry</div>
                 {assetTelemetry.length === 0 ? (
                   <p className="text-slate-500">No recent channel samples</p>
@@ -664,6 +807,44 @@ export function DigitalTwinView({ data }: { data: WorkspaceData }) {
             <p className="text-xs text-slate-400">Select an asset node on the Digital Twin canvas.</p>
           )}
         </div>
+      </div>
+
+      {/* Persisted Twin Snapshots History */}
+      <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
+        <div className="px-5 py-3.5 border-b border-[#1E293B] flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-100">Versioned Digital Twin Snapshots</h2>
+          <span className="text-xs font-mono text-slate-400">{data.twinSnapshots?.length || 0} checkpoints</span>
+        </div>
+        {!data.twinSnapshots || data.twinSnapshots.length === 0 ? (
+          <div className="p-5 text-xs text-slate-400">
+            No Digital Twin checkpoints saved yet. Click "Capture Twin Snapshot" above to persist a historical state version.
+          </div>
+        ) : (
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[#1E293B] text-xs text-slate-400">
+                <th className="py-3 px-4">Version</th>
+                <th className="py-3 px-4">Label</th>
+                <th className="py-3 px-4 text-right">Assets</th>
+                <th className="py-3 px-4 text-right">Flagged</th>
+                <th className="py-3 px-4 text-right">Mean Health</th>
+                <th className="py-3 px-4">Captured By</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1E293B] text-xs">
+              {data.twinSnapshots.map((snap) => (
+                <tr key={snap.id} className="hover:bg-[#161E2E]/60">
+                  <td className="py-2.5 px-4 font-mono text-sky-400">{snap.twinVersion}</td>
+                  <td className="py-2.5 px-4 text-slate-100">{snap.label}</td>
+                  <td className="py-2.5 px-4 text-right font-mono tabular-nums text-slate-300">{snap.assetCount}</td>
+                  <td className="py-2.5 px-4 text-right font-mono tabular-nums text-amber-400">{snap.criticalAssetCount}</td>
+                  <td className="py-2.5 px-4 text-right font-mono tabular-nums text-emerald-400">{snap.meanHealthScore}%</td>
+                  <td className="py-2.5 px-4 font-mono text-slate-400">{snap.createdBy}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

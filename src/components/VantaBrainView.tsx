@@ -1,5 +1,13 @@
 import React, { useState } from 'react';
-import { Send, CheckCircle2, AlertTriangle, HelpCircle, Wrench } from 'lucide-react';
+import {
+  Send,
+  CheckCircle2,
+  AlertTriangle,
+  HelpCircle,
+  Wrench,
+  TrendingUp,
+  ShieldAlert,
+} from 'lucide-react';
 import { vantaApi } from '../api/client';
 import type { BrainAnalysisResponse, NavigationSection } from '../core/types';
 import type { WorkspaceData } from '../types/workspace';
@@ -47,7 +55,7 @@ export function VantaBrainView({
     <div className="space-y-6">
       <ModuleHeader
         title="VANTA Brain — Infrastructure Reasoning Engine"
-        subtitle="Evidence-backed operational reasoning powered by server-side Gemini tool calling over scoped assets, telemetry, incidents, and knowledge documents."
+        subtitle="10-stage evidence-backed reasoning powered by server-side Gemini tool calling, facility-scoped authorization, and strict server citation validation."
         capability="FUNCTIONAL"
         dataMode="MIXED"
         actions={
@@ -63,7 +71,8 @@ export function VantaBrainView({
 
       <form onSubmit={handleAnalyze} className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
         <label htmlFor="brain-query-input" className="block text-xs font-medium text-slate-300">
-          Operational Investigation Query (scoped to {selectedFacilityId === 'ALL' ? 'all authorized facilities' : selectedFacilityId})
+          Operational Investigation Query (scoped to{' '}
+          {selectedFacilityId === 'ALL' ? 'authorized facility scope' : selectedFacilityId})
         </label>
         <div className="flex flex-col sm:flex-row gap-3">
           <input
@@ -109,8 +118,8 @@ export function VantaBrainView({
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-8 text-center space-y-2">
           <h2 className="text-sm font-medium text-slate-200">Ready for Evidence-Backed Investigation</h2>
           <p className="text-xs text-slate-400 max-w-xl mx-auto">
-            Submit a query above. VANTA Brain queries live tenant SQLite tools and separates Verified Facts
-            (with source IDs), Observations, Hypotheses, and Human-Approved Recommendations.
+            Submit a query above. VANTA Brain retrieves facility-authorized records, validates every
+            evidence citation server-side, separates Measured vs Simulated claims, and flags explicit unknowns.
           </p>
         </div>
       ) : (
@@ -118,26 +127,48 @@ export function VantaBrainView({
           {history.map((res, idx) => (
             <article key={`${res.createdAt}-${idx}`} className="bg-[#111827] border border-[#1E293B] rounded-lg p-6 space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E293B] pb-3">
-                <h2 className="text-base font-semibold text-white">{res.query}</h2>
-                <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
+                <div>
+                  <h2 className="text-base font-semibold text-white">{res.query}</h2>
+                  <div className="text-[11px] font-mono text-sky-400 mt-0.5">
+                    INTENT: {res.intent || 'GENERAL_STATUS'} · MODEL: {res.modelId || res.engineUsed}
+                    {res.latencyMs !== undefined ? ` · ${res.latencyMs}ms` : ''}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-slate-400">
                   <span>ENGINE: {res.engineUsed}</span>
                   <span aria-hidden="true">·</span>
                   <span>TOOLS: {res.toolsCalled.join(', ')}</span>
                 </div>
               </div>
 
+              {res.rejectedCitations && res.rejectedCitations.length > 0 && (
+                <div className="p-3 rounded-md bg-amber-950/40 border border-amber-800/70 text-xs text-amber-200 flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                  <div>
+                    <div className="font-semibold">
+                      Server Citation Validator stripped {res.rejectedCitations.length} unverified citation(s)
+                    </div>
+                    <div className="text-[11px] text-amber-300/90 mt-0.5">
+                      Unverified IDs removed before output so only facility-authorized SQLite records are presented.
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-2.5">
                   <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
                     <CheckCircle2 className="w-4 h-4" />
-                    Verified Facts (Database Citations)
+                    Verified Facts (Server-Validated Citations)
                   </div>
                   <ul className="space-y-2 text-xs text-slate-200">
                     {res.verifiedFacts.map((fact, i) => (
                       <li key={i} className="pb-2 border-b border-[#1E293B] last:border-b-0">
                         <div>{fact.claim}</div>
-                        <div className="font-mono text-[11px] text-slate-400 mt-0.5">
-                          Source: {fact.sourceId} · {fact.module}
+                        <div className="font-mono text-[11px] text-slate-400 mt-0.5 flex flex-wrap gap-2">
+                          <span>Source: {fact.sourceId}</span>
+                          <span>· {fact.module}</span>
+                          {fact.dataMode && <span>· Mode: {fact.dataMode}</span>}
                         </div>
                       </li>
                     ))}
@@ -170,6 +201,34 @@ export function VantaBrainView({
                   </div>
                 </div>
               </div>
+
+              {(res.predictions?.length || res.unknowns?.length) ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-3 border-t border-[#1E293B] text-xs">
+                  {res.predictions && res.predictions.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 font-semibold text-indigo-300">
+                        <TrendingUp className="w-4 h-4" />
+                        Risk Projections & Predictions
+                      </div>
+                      <ul className="list-disc pl-4 space-y-1 text-slate-300">
+                        {res.predictions.map((p, i) => (
+                          <li key={i}>{p}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {res.unknowns && res.unknowns.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="font-semibold text-slate-300">Explicit Unknowns & Blind Spots</div>
+                      <ul className="list-disc pl-4 space-y-1 text-slate-400">
+                        {res.unknowns.map((u, i) => (
+                          <li key={i}>{u}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               <div className="pt-4 border-t border-[#1E293B] space-y-3">
                 <div className="flex items-center gap-2 text-xs font-semibold text-slate-100">

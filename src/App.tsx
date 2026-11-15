@@ -139,7 +139,12 @@ export default function App() {
       setWorkspace(ws);
       setHealth(sysHealth);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load workspace.');
+      const message = err instanceof Error ? err.message : 'Failed to load workspace.';
+      if (message.toLowerCase().includes('authentication required') || message.includes('401') || message.toLowerCase().includes('suspended')) {
+        setUser(null);
+        return;
+      }
+      setLoadError(message);
     } finally {
       setLoading(false);
     }
@@ -149,16 +154,22 @@ export default function App() {
     let active = true;
     async function initAuth() {
       try {
-        const sessionRes = await vantaApi.getSession();
+        const [sessionRes, authConfig] = await Promise.all([
+          vantaApi.getSession(),
+          vantaApi.getAuthConfig().catch(() => ({ allowDemoAuth: false })),
+        ]);
         if (!active) return;
         if (sessionRes.authenticated && sessionRes.user) {
           setUser(sessionRes.user);
-        } else if (new URLSearchParams(window.location.search).get('autostart') === '1') {
+          return;
+        }
+        const params = new URLSearchParams(window.location.search);
+        if (authConfig.allowDemoAuth && params.get('login') !== '1') {
           const demo = await vantaApi.login('ops.manager@apex-industrial.io', 'VantaDemo!2026');
           if (active) setUser(demo.user);
         }
       } catch {
-        // Unauthenticated
+        // Remain on AuthPortal if backend unreachable or demo auth disabled
       } finally {
         if (active) setAuthChecked(true);
       }
@@ -177,22 +188,35 @@ export default function App() {
     loadWorkspace(selectedFacilityId);
   }, [user, selectedFacilityId, loadWorkspace]);
 
-  // Live SSE Telemetry subscription
+  // Live SSE Telemetry subscription using short-lived, single-use stream tickets
   useEffect(() => {
     if (!user) return;
-    const es = new EventSource('/api/stream/telemetry');
-    es.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data) as { type?: string };
-        if (parsed.type === 'TELEMETRY_UPDATE') {
-          loadWorkspace(selectedFacilityId);
-        }
-      } catch {
-        // ignore heartbeat parse
-      }
-    };
+    let active = true;
+    let es: EventSource | null = null;
+
+    vantaApi
+      .getStreamTicket()
+      .then(({ ticket }) => {
+        if (!active) return;
+        es = new EventSource(`/api/stream/telemetry?ticket=${encodeURIComponent(ticket)}`);
+        es.onmessage = (event) => {
+          try {
+            const parsed = JSON.parse(event.data) as { type?: string };
+            if (parsed.type === 'TELEMETRY_UPDATE') {
+              loadWorkspace(selectedFacilityId);
+            }
+          } catch {
+            // ignore heartbeat parse
+          }
+        };
+      })
+      .catch(() => {
+        // SSE stream optional if session transitions
+      });
+
     return () => {
-      es.close();
+      active = false;
+      es?.close();
     };
   }, [user, selectedFacilityId, loadWorkspace]);
 
@@ -201,6 +225,7 @@ export default function App() {
     setUser(null);
     setWorkspace(null);
     setSelectedFacilityId('ALL');
+    setActiveSection('overview');
   };
 
   if (!authChecked) {
@@ -212,7 +237,14 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthPortal onAuthenticated={(loggedInUser) => setUser(loggedInUser)} />;
+    return (
+      <AuthPortal
+        onAuthenticated={(loggedInUser) => {
+          setSelectedFacilityId('ALL');
+          setUser(loggedInUser);
+        }}
+      />
+    );
   }
 
   const activeNavMeta = ALL_NAV_ITEMS.find((item) => item.id === activeSection);
@@ -223,13 +255,22 @@ export default function App() {
         <div role="alert" className="p-5 rounded-lg bg-rose-950/40 border border-rose-800 text-xs text-rose-200 space-y-2">
           <div className="font-semibold">Workspace Load Error</div>
           <div>{loadError}</div>
-          <button
-            type="button"
-            onClick={() => loadWorkspace(selectedFacilityId)}
-            className="px-3 py-1.5 rounded bg-rose-800 text-white text-xs"
-          >
-            Retry
-          </button>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => loadWorkspace(selectedFacilityId)}
+              className="px-3 py-1.5 rounded bg-rose-800 hover:bg-rose-700 text-white text-xs"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-3 py-1.5 rounded border border-rose-700 text-rose-200 text-xs"
+            >
+              Switch Operator Account
+            </button>
+          </div>
         </div>
       );
     }
@@ -266,7 +307,7 @@ export default function App() {
       case 'vision-intelligence':
         return <VisionIntelligenceView data={workspace} onRefresh={refresh} />;
       case 'camera-management':
-        return <CameraManagementView data={workspace} />;
+        return <CameraManagementView data={workspace} onRefresh={refresh} />;
       case 'infrastructure':
         return <InfrastructureView data={workspace} />;
       case 'asset-intelligence':
@@ -274,7 +315,13 @@ export default function App() {
       case 'iot-telemetry':
         return <IoTTelemetryView data={workspace} onRefresh={refresh} />;
       case 'digital-twin':
-        return <DigitalTwinView data={workspace} />;
+        return (
+          <DigitalTwinView
+            data={workspace}
+            selectedFacilityId={selectedFacilityId}
+            onRefresh={refresh}
+          />
+        );
       case 'predictive-maintenance':
         return <PredictiveMaintenanceView data={workspace} />;
       case 'energy-intelligence':
@@ -288,15 +335,15 @@ export default function App() {
       case 'knowledge-center':
         return <KnowledgeCenterView data={workspace} onRefresh={refresh} />;
       case 'security-governance':
-        return <SecurityGovernanceView data={workspace} user={user} />;
+        return <SecurityGovernanceView data={workspace} user={user} onSignedOut={() => setUser(null)} />;
       case 'analytics-reports':
         return <AnalyticsReportsView data={workspace} />;
       case 'integrations':
-        return <IntegrationsView data={workspace} />;
+        return <IntegrationsView data={workspace} onRefresh={refresh} />;
       case 'administration':
         return <AdministrationView data={workspace} user={user} />;
       case 'system-health':
-        return <SystemHealthView health={health} />;
+        return <SystemHealthView health={health} user={user} />;
       default:
         return <OverviewView data={workspace} onNavigate={setActiveSection} />;
     }
@@ -345,7 +392,7 @@ export default function App() {
 
         <div className="p-4 border-t border-[#1E293B] text-xs space-y-1">
           <div className="font-medium text-slate-200 truncate">{user.fullName}</div>
-          <div className="font-mono text-[11px] text-slate-400 truncate">{user.role}</div>
+          <div className="font-mono text-[11px] text-sky-400 truncate">{user.role}</div>
           <div className="font-mono text-[11px] text-slate-500 truncate">{user.organizationName}</div>
         </div>
       </aside>
@@ -451,7 +498,7 @@ export default function App() {
               className="px-3 py-1.5 rounded-md border border-[#243044] hover:border-slate-500 text-xs font-medium text-slate-200 flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Sign Out</span>
+              <span>Switch Operator / Sign Out</span>
             </button>
           </div>
         </header>
