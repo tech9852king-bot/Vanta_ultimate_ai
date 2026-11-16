@@ -1,0 +1,10 @@
+{
+  "filename": "vanta-backup-2026-11-15T14-35-34-750Z-ultra-phase0-baseline.db",
+  "filePath": "/app/applet/.vanta-data/backups/vanta-backup-2026-11-15T14-35-34-750Z-ultra-phase0-baseline.db",
+  "sizeBytes": 319488,
+  "sha256": "5d42824a93238bf11a5a2daf2514f6c6d3750e1f16de71aa8b43db795d298b0d",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-15T14:35:34.760Z",
+  "backupType": "VACUUM_INTO",
+  "schemaVersion": "005_repair_legacy_verification_and_state_machine"
+}

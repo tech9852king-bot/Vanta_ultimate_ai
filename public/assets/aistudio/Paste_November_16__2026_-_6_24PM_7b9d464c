@@ -1,0 +1,1063 @@
+# VANTA AI V6 — ABSOLUTE MASTER ENGINEERING & ENTERPRISE EVOLUTION DIRECTIVE
+
+## PROJECT IDENTITY
+
+**Product:** VANTA AI  
+**Platform:** Universal Infrastructure Intelligence & Operations Platform  
+**Input:** The exact uploaded `vanta-ai (6).zip`  
+**Engineering Authority:** Principal Software Architect, Enterprise AI Architect, Infrastructure Intelligence Architect, Security Architect, Database Reliability Engineer, DevSecOps Engineer, SRE and Quality Assurance Lead.
+
+**Execution Standard:**
+- Forensic-first.
+- Evidence-driven.
+- Backup-first.
+- Zero-regression.
+- Security-first.
+- Reproducible engineering.
+- Strict change governance.
+- Measurable improvements.
+- Honest capability reporting.
+
+---
+
+# 1. PRIMARY MISSION
+
+Transform the supplied VANTA AI V6 project into a genuinely reliable, secure, extensible, enterprise-grade infrastructure intelligence platform.
+
+This is an evolution of the existing project, NOT a greenfield rewrite.
+
+Preserve the existing application architecture, visual identity, functional modules, database records, API contracts and working features.
+
+Your objective is to improve the engineering quality and real operational capability of the existing system without introducing regressions.
+
+The most important objectives are:
+
+1. Repair and genuinely verify VANTA Brain's Gemini integration.
+2. Investigate the V5-to-V6 database migration and provenance differences.
+3. Correct the zero-byte dependency lockfile.
+4. Verify and repair sidebar and content scrolling behavior.
+5. Reconcile README, ARCHITECTURE, configuration and actual implementation.
+6. Strengthen database, backup and migration reliability.
+7. Improve authentication, authorization and tenant isolation.
+8. Validate all existing intelligence modules.
+9. Establish repeatable testing and production builds.
+10. Produce complete professional engineering documentation.
+
+Do not optimize appearance at the expense of correctness.
+
+Do not declare capabilities verified without evidence.
+
+# 2. SOURCE-OF-TRUTH AND WORKSPACE GOVERNANCE
+
+The supplied V6 ZIP is the initial inspection source.
+
+The currently active workspace may contain changes newer than the ZIP.
+
+Before changing anything:
+
+1. Inspect the actual active workspace.
+2. Identify its project root.
+3. Compare workspace files against the supplied ZIP.
+4. Identify newer files and user modifications.
+5. Inspect package manifests and dependency state.
+6. Inspect the current database and its WAL/SHM state.
+7. Inspect backup files and their manifests.
+8. Inspect the existing Git state if available.
+9. Generate SHA-256 hashes for critical baseline files.
+10. Create a complete change manifest.
+
+Never replace newer workspace content with older ZIP content.
+
+Never assume a previous audit describes the current workspace.
+
+Never delete existing data or backups.
+
+Never reset, recreate or overwrite the active database.
+
+Never rewrite historical migrations.
+
+Never force-push, commit or publish without explicit authorization.
+
+# 3. CHANGE PERMISSION MODEL
+
+Classify every proposed change.
+
+**CLASS A — SAFE**
+- Documentation corrections.
+- Isolated UI fixes.
+- Non-breaking internal improvements.
+- Additional tests.
+- Logging improvements.
+
+**CLASS B — CONTROLLED**
+- New internal services.
+- Dependency changes.
+- Compatible API extensions.
+- Non-destructive database improvements.
+- Performance optimizations.
+
+**CLASS C — APPROVAL REQUIRED**
+- Authentication changes.
+- Authorization changes.
+- Existing API contract changes.
+- Database schema migrations.
+- Session behavior changes.
+- Historical data transformations.
+
+**CLASS D — EXPLICIT AUTHORIZATION REQUIRED**
+- Database deletion.
+- Data reset.
+- Destructive migrations.
+- Credential rotation affecting users.
+- Production deployment.
+- Public publishing.
+- External system actions.
+- Git push or irreversible operations.
+
+Do not execute Class C or D changes without appropriate authorization.
+
+If an issue cannot safely be repaired without approval, document the proposed change and wait.
+
+# 4. CRITICAL PRIORITY — VANTA BRAIN
+
+## 4.1 Establish the actual baseline
+
+Inspect:
+
+- `src/server/ai.ts`
+- `src/server/config.ts`
+- `src/server/routes.ts`
+- `src/components/VantaBrainView.tsx`
+- `src/api/client.ts`
+- `src/server/observability.ts`
+- `src/server/validation.ts`
+- `src/core/types.ts`
+
+Trace the complete execution pipeline:
+
+USER INPUT
+→ AUTHENTICATION
+→ FACILITY AUTHORIZATION
+→ QUERY VALIDATION
+→ INTENT CLASSIFICATION
+→ TOOL PLANNING
+→ TOOL EXECUTION
+→ EVIDENCE COLLECTION
+→ EVIDENCE SERIALIZATION
+→ GEMINI REQUEST
+→ RESPONSE PARSING
+→ SCHEMA VALIDATION
+→ CITATION VALIDATION
+→ DATABASE PERSISTENCE
+→ AUDIT LOGGING
+→ FRONTEND DISPLAY.
+
+Find the exact failure point.
+
+Do not make speculative timeout increases without diagnosis.
+
+## 4.2 Investigate current Brain execution records
+
+The V6 database contains two saved Brain runs.
+
+Both are recorded as:
+
+`DETERMINISTIC_CORE_FALLBACK`
+
+Their recorded model is:
+
+`deterministic-core-v2`
+
+These records do not prove live Gemini success.
+
+Investigate:
+
+- Why fallback was selected.
+- Whether an API key was available.
+- Whether the model was supported.
+- Whether provider requests were actually made.
+- Whether timeouts were caused by network, SDK, model configuration, request size or response processing.
+- Whether the database contains incomplete or stale execution records.
+
+Do not fabricate successful Gemini execution records.
+
+## 4.3 Verify model compatibility
+
+Current source configuration includes:
+
+- `gemini-4-hydrogen`
+- `gemini-4-argon`
+- `gemini-4-carbon`
+- `gemini-3.1-flash-lite`
+
+Default:
+
+`gemini-4-hydrogen`
+
+Do not assume these identifiers are valid simply because they appear in the project.
+
+Verify actual current Google AI Studio / Gemini API compatibility.
+
+For every model considered, establish:
+
+- Exact supported model ID.
+- API availability.
+- SDK compatibility.
+- Structured JSON support.
+- Context limits.
+- Output limits.
+- Latency behavior.
+- Access restrictions.
+- Suitable use cases.
+
+Do not invent model IDs.
+
+Do not silently change the production model.
+
+Evaluate Hydrogen and Argon only if their exact API model identifiers are verified.
+
+If a model is unavailable or unsupported, report that fact and recommend a verified alternative.
+
+Keep the model allowlist centralized and configurable.
+
+## 4.4 Repair timeout and cancellation behavior
+
+Inspect:
+
+- `withTimeoutAndAbort`
+- `withTimeout`
+- `runVantaBrainQuery`
+- Gemini SDK request options.
+- `AbortSignal` propagation.
+- Retry classification.
+- Overall request deadline.
+
+A Promise timeout does not automatically prove that the underlying provider request has been cancelled.
+
+Verify actual cancellation behavior.
+
+Implement a bounded execution strategy:
+
+- One overall request deadline.
+- Explicit per-attempt timeout.
+- Bounded retry count.
+- Exponential backoff with jitter.
+- Correct retry classification.
+- Cancellation propagation where supported.
+- No unbounded background provider calls.
+
+Current source classifies timeout errors as non-retryable, while README describes timeout retries.
+
+Resolve this contradiction based on the actual SDK behavior and measured results.
+
+Do not retry:
+- Invalid API credentials.
+- Unsupported models.
+- Permanent permission errors.
+- Invalid request schemas.
+
+Retry only verified transient failures.
+
+## 4.5 Real Gemini verification
+
+Implement a controlled provider verification workflow.
+
+Required sequence:
+
+1. Detect provider configuration.
+2. Validate model configuration.
+3. Execute a minimal provider request.
+4. Validate provider response.
+5. Execute a structured JSON request.
+6. Validate structured output.
+7. Execute a genuine VANTA Brain query.
+8. Validate source citations.
+9. Persist execution metadata.
+10. Display the actual result.
+
+Standard tests must use deterministic mocked responses.
+
+Live provider testing must be a separate controlled smoke test using valid credentials.
+
+Never expose API keys.
+
+If credentials are unavailable, mark live testing BLOCKED.
+
+## 4.6 Brain output integrity
+
+Preserve the distinction between:
+
+- VERIFIED FACTS
+- OBSERVATIONS
+- ASSUMPTIONS
+- HYPOTHESES
+- PREDICTIONS
+- RECOMMENDATIONS
+- UNKNOWNS
+
+Every verified fact must reference a real source record.
+
+Reject invalid citations.
+
+Do not present model-generated assumptions as verified facts.
+
+Preserve evidence-size limits and complete JSON objects.
+
+Report omitted evidence explicitly.
+
+## 4.7 Brain observability
+
+Persist and display:
+
+- Execution ID.
+- Correlation ID.
+- Provider.
+- Model.
+- Engine.
+- Status.
+- Failure category.
+- Latency.
+- Retry count.
+- Tools called.
+- Tool failures.
+- Evidence count.
+- Rejected citations.
+- Omitted evidence.
+- Timestamp.
+
+Use accurate statuses:
+
+- GEMINI_SUCCESS
+- DETERMINISTIC_FALLBACK
+- DEGRADED
+- FAILED
+- CANCELLED
+- NOT_CONFIGURED
+
+A configured API key does not prove provider availability.
+
+A fallback answer does not prove Gemini functionality.
+
+# 5. CRITICAL PRIORITY — V5 TO V6 DATABASE AND PROVENANCE INVESTIGATION
+
+This is a mandatory forensic task.
+
+Previous V5 inspection reported:
+
+- Seven applied migrations.
+- Thirteen evidence provenance records.
+- Four saved Brain executions.
+
+Current V6 database inspection reported:
+
+- Six applied migrations.
+- Zero evidence provenance records.
+- Two saved Brain executions.
+
+Do not assume this is harmless.
+
+Do not automatically assume data loss either.
+
+Determine whether V6 contains:
+
+- An older database snapshot.
+- A different database path.
+- A restored baseline.
+- An incomplete migration.
+- A migration history change.
+- A provenance table reset.
+- A workspace/database mismatch.
+
+Inspect all available database snapshots and their timestamps.
+
+Compare schemas and critical table counts.
+
+Check:
+
+- Organizations.
+- Users.
+- Facilities.
+- Assets.
+- Incidents.
+- Work orders.
+- Audit records.
+- Brain runs.
+- Evidence provenance.
+- Digital Twin snapshots.
+- Session records.
+- Migration history.
+
+Establish a verified database lineage report.
+
+## 5.1 Provenance integrity
+
+Preserve the nine evidence classifications:
+
+- MEASURED
+- OBSERVED
+- HUMAN_REPORTED
+- SYSTEM_RECORDED
+- ESTIMATED
+- INFERRED
+- PREDICTED
+- SIMULATED
+- UNKNOWN
+
+Preserve all valid evidence relationships.
+
+Ensure provenance records reference genuine existing source records.
+
+Never create synthetic historical evidence merely to increase record counts.
+
+If valid records from another database snapshot are missing, propose a non-destructive recovery plan.
+
+Never merge or overwrite databases without explicit approval.
+
+# 6. CRITICAL PRIORITY — DEPENDENCY AND LOCKFILE REPAIR
+
+Current V6 contains a zero-byte `bun.lock`.
+
+This is not a valid reproducible dependency lockfile.
+
+Inspect:
+
+- `package.json`
+- `.npmrc`
+- `bun.lock`
+- TypeScript configuration.
+- Vite configuration.
+- Runtime requirements.
+- Dependency compatibility.
+
+Choose one authoritative package manager.
+
+Generate a valid lockfile using the actual package manager.
+
+Verify the lockfile is non-empty and consistent with the manifest.
+
+Perform a clean dependency installation.
+
+Verify:
+
+- Runtime packages.
+- Development packages.
+- `tsx`.
+- TypeScript.
+- Vite.
+- React.
+- Express.
+- Google GenAI SDK.
+- Node.js compatibility.
+
+Do not blindly upgrade major dependencies.
+
+Do not add unnecessary heavy dependencies.
+
+Do not claim reproducibility until frozen installation succeeds.
+
+Document the exact package manager and supported version.
+
+# 7. CRITICAL PRIORITY — SIDEBAR AND MAIN CONTENT SCROLLING
+
+Target:
+
+`src/App.tsx`
+
+The current V6 source includes:
+
+- `h-screen h-dvh overflow-hidden`.
+- Stationary desktop sidebar frame.
+- Independent navigation `overflow-y-auto`.
+- `min-h-0` flex sizing.
+- Independent main content scrolling.
+- Mobile drawer with independent navigation scroll.
+
+Preserve this implementation if it is correct.
+
+Do not rewrite it unnecessarily.
+
+## Required behavior
+
+**Desktop**
+- Sidebar frame stays stationary.
+- Sidebar branding stays stationary.
+- User/session footer stays stationary.
+- Only navigation content scrolls inside the navigation area.
+- Main content scrolls independently.
+- Header remains stationary.
+- No accidental document-level vertical scrolling.
+- No horizontal overflow.
+
+**Mobile**
+- Drawer opens and closes correctly.
+- Drawer navigation scrolls independently.
+- Backdrop behavior works.
+- Background scroll is controlled.
+- Selecting a navigation item closes the drawer.
+- Long navigation remains accessible.
+
+## Browser test dimensions
+
+- 1440×900.
+- 1366×768.
+- 1024×768.
+- 768×1024.
+- 390×844.
+
+Also test:
+- Long overview pages.
+- Short overview pages.
+- Long navigation.
+- Browser zoom.
+- Keyboard navigation.
+- Mobile drawer open state.
+
+Use browser automation when available.
+
+Provide actual verification evidence.
+
+Static screenshots alone do not prove independent scrolling.
+
+# 8. README.MD — COMPLETE PROFESSIONAL DOCUMENTATION
+
+The README is mandatory and must always be included in the final project.
+
+The current README has important version and configuration inconsistencies.
+
+It identifies the release as V4 and describes migrations 001–007, while the supplied V6 package manifest reports version 2.0.0 and the inspected current database reports migrations 001–006.
+
+Do not simply change the README title.
+
+Reconcile every statement with the actual source.
+
+## Required README structure
+
+1. Project title and release identity.
+2. Executive overview.
+3. Product mission.
+4. Platform architecture.
+5. System requirements.
+6. Technology stack and exact versions.
+7. Repository structure.
+8. Installation.
+9. Package manager and lockfile.
+10. Environment variables.
+11. Gemini provider configuration.
+12. VANTA Brain architecture.
+13. Evidence and provenance architecture.
+14. Authentication and authorization.
+15. Tenant and facility isolation.
+16. Vision Intelligence.
+17. Camera Management.
+18. Infrastructure and Asset Intelligence.
+19. IoT and Telemetry.
+20. Digital Twin.
+21. Predictive Maintenance.
+22. Energy Intelligence.
+23. Root Cause Analysis.
+24. Multi-Agent Architecture.
+25. Operations and Workflows.
+26. Database schema and migrations.
+27. API reference.
+28. Testing.
+29. Build and deployment.
+30. Backup and restore.
+31. Security model.
+32. Observability.
+33. Troubleshooting.
+34. Known limitations.
+35. Capability honesty matrix.
+36. Development roadmap.
+37. Release notes.
+
+Include accurate commands.
+
+Do not document commands that do not exist in `package.json`.
+
+Do not claim tests passed without actual execution.
+
+Do not claim integrations are live when they are simulated.
+
+Do not claim browser verification based only on screenshots.
+
+## Documentation synchronization
+
+Keep these files consistent:
+
+- `README.md`
+- `ARCHITECTURE.md`
+- `.env.example`
+- `package.json`
+- `src/server/config.ts`
+- Actual database migration history.
+
+Resolve:
+
+- V4 versus V6 release identity.
+- Migration count.
+- Model allowlist.
+- Timeout defaults.
+- Retry behavior.
+- Lockfile instructions.
+- Test commands.
+- Actual capability statuses.
+
+# 9. BACKUP, WAL AND RECOVERY GOVERNANCE
+
+The archive includes:
+
+- Main SQLite database.
+- WAL file.
+- SHM file.
+- Multiple backup snapshots.
+- SHA-256 JSON manifests.
+
+Treat the active database and WAL as a consistency-sensitive unit.
+
+Never copy an active SQLite database as if the main DB file alone necessarily contains every committed transaction.
+
+Use a supported SQLite backup or checkpoint procedure.
+
+Never delete WAL or SHM files manually during normal application operation.
+
+## Backup manifest correction
+
+The third backup manifest has a filename/path mismatch.
+
+The actual archived backup hash matches its stored SHA-256, but its metadata must be corrected.
+
+For each backup, verify:
+
+- Actual filename.
+- Actual path.
+- Byte size.
+- SHA-256.
+- Creation timestamp.
+- SQLite integrity.
+- Schema version.
+
+Correct metadata only after verification.
+
+Test restore only against an isolated target.
+
+Never overwrite the live database during restore testing.
+
+Distinguish:
+
+- Backup created.
+- Hash verified.
+- Integrity checked.
+- Restore tested.
+
+# 10. SECURITY AND MULTI-TENANT ISOLATION
+
+Preserve and strengthen:
+
+- Scrypt password hashing.
+- HMAC-SHA256 session signing.
+- Session revocation.
+- Secure cookie settings.
+- Rate limiting.
+- RBAC.
+- Facility-level authorization.
+- Tenant isolation.
+- Input validation.
+- Audit records.
+- Production fail-closed configuration.
+
+Test:
+
+- Unauthenticated requests.
+- Invalid sessions.
+- Expired sessions.
+- Revoked sessions.
+- Cross-tenant access.
+- Cross-facility access.
+- Unauthorized mutations.
+- Rate-limit enforcement.
+- Malformed input.
+- Secret exposure.
+- Provider error leakage.
+
+Do not trust client-provided tenant IDs or facility IDs.
+
+Every server-side tool must obey the authenticated user's scope.
+
+Gemini must never override authorization.
+
+# 11. VANTA PLATFORM MODULE VALIDATION
+
+Preserve and verify the complete platform:
+
+1. Overview.
+2. Command Center.
+3. VANTA Brain.
+4. Vision Intelligence.
+5. Camera Management.
+6. Infrastructure.
+7. Asset Intelligence.
+8. IoT & Telemetry.
+9. Digital Twin.
+10. Predictive Maintenance.
+11. Energy Intelligence.
+12. Root Cause Analysis.
+13. AI Agents.
+14. Operations & Workflows.
+15. Knowledge Center.
+16. Security & Governance.
+17. Analytics & Reports.
+18. Integrations.
+19. Administration.
+20. System Health.
+
+For every module, verify:
+
+- UI functionality.
+- API integration.
+- Data source.
+- Database persistence.
+- Authorization.
+- Error states.
+- Loading states.
+- Empty states.
+- Capability classification.
+
+Do not remove working features to simplify the application.
+
+Do not replace database-backed functionality with hardcoded sample values.
+
+# 12. INDUSTRIAL CONNECTIVITY AND SAFETY
+
+Preserve the distinction between simulated and actual physical connectivity.
+
+Inspect:
+
+- MQTT.
+- OPC UA.
+- Modbus TCP.
+- REST.
+- WebSockets.
+- BACnet/IP.
+- SNMP.
+- Camera/ONVIF capability.
+
+Do not label protocol lifecycle simulations as live connections.
+
+Do not claim hardware communication unless a real provider connection has been demonstrated.
+
+VANTA AI must remain an intelligence and coordination layer.
+
+Never bypass PLC safety logic, emergency stops, certified safety interlocks or independent protection systems.
+
+AI recommendations remain advisory until authorized by a human operator.
+
+# 13. DIGITAL TWIN AND PREDICTIVE INTELLIGENCE
+
+Preserve existing Digital Twin snapshots and dependency graphs.
+
+Clearly distinguish:
+
+- Observed state.
+- Measured telemetry.
+- Estimated state.
+- Simulated state.
+- Predicted state.
+
+Do not claim physics-validated simulation if the implementation uses graph-based cascade logic.
+
+Do not claim production-validated RUL if the implementation uses heuristics.
+
+Predictive accuracy must be measured against actual historical outcomes.
+
+Document uncertainty and evidence coverage separately from prediction accuracy.
+
+# 14. MULTI-AGENT GOVERNANCE
+
+Preserve all existing 12 specialized agents.
+
+Verify:
+
+- Tool allowlists.
+- Step limits.
+- Execution time limits.
+- Authorization scope.
+- Idempotency.
+- Execution trace.
+- Failure isolation.
+- Evidence citations.
+- Human approval boundaries.
+
+No agent may acquire additional permissions through model-generated instructions.
+
+No agent may directly actuate hazardous physical infrastructure.
+
+All operational changes must remain human-authorized.
+
+# 15. TESTING AND VALIDATION
+
+Execute actual tests after dependency installation.
+
+Required:
+
+A. Unit tests.
+
+B. API tests.
+
+C. Security tests.
+
+D. Tenant isolation tests.
+
+E. Facility authorization tests.
+
+F. Brain provider tests.
+
+G. Brain fallback tests.
+
+H. Evidence provenance tests.
+
+I. Migration tests.
+
+J. Backup and restore tests.
+
+K. Work-order lifecycle tests.
+
+L. Agent permission tests.
+
+M. Digital Twin tests.
+
+N. Responsive layout tests.
+
+O. Sidebar scroll tests.
+
+P. Production build.
+
+Q. TypeScript validation.
+
+Brain test matrix must cover:
+
+- Valid mocked Gemini response.
+- Missing key.
+- Invalid key.
+- Unsupported model.
+- Permission error.
+- Provider timeout.
+- Cancellation.
+- Rate limiting.
+- Provider unavailable.
+- Invalid JSON.
+- Schema failure.
+- Citation rejection.
+- Citation success.
+- Tool failure.
+- Partial evidence.
+- Full fallback.
+- Retry behavior.
+- Tenant isolation.
+- Facility isolation.
+- Correlation ID persistence.
+- Audit persistence.
+
+Do not weaken assertions.
+
+Do not skip failing tests to create a green report.
+
+Report exact commands, exit codes and results.
+
+If live Gemini credentials are unavailable, mark live testing BLOCKED.
+
+# 16. PERFORMANCE AND RESOURCE GOVERNANCE
+
+The application must remain practical on modest development hardware.
+
+Avoid:
+- Unnecessary background loops.
+- Duplicate provider requests.
+- Unbounded concurrency.
+- Excessive retries.
+- Heavy new dependencies.
+- Unnecessary large bundle growth.
+- Memory leaks.
+- Excessive polling.
+
+Measure before optimizing.
+
+Preserve application responsiveness.
+
+Use pagination for large datasets.
+
+Use bounded database queries.
+
+Use controlled provider concurrency.
+
+# 17. IMPLEMENTATION PHASES
+
+Execute in order.
+
+**PHASE 0 — READ-ONLY FORENSIC AUDIT**
+
+Inspect every critical subsystem and generate a baseline report.
+
+**PHASE 1 — RECOVERY POINT**
+
+Create verified source and database recovery points.
+
+**PHASE 2 — DATABASE LINEAGE**
+
+Investigate V5/V6 migration and provenance differences.
+
+**PHASE 3 — BRAIN ROOT-CAUSE REPAIR**
+
+Resolve Gemini model, timeout, cancellation, retry and response validation problems.
+
+**PHASE 4 — UI REGRESSION**
+
+Verify desktop and mobile scrolling behavior.
+
+**PHASE 5 — DEPENDENCY REPRODUCIBILITY**
+
+Repair the empty lockfile and prove clean installation.
+
+**PHASE 6 — DOCUMENTATION**
+
+Correct README, architecture, configuration and release identity.
+
+**PHASE 7 — SECURITY AND MODULE TESTING**
+
+Validate the full application.
+
+**PHASE 8 — BUILD AND RELEASE ASSESSMENT**
+
+Run production build, final integrity checks and change manifest generation.
+
+Every phase must have explicit acceptance criteria.
+
+Do not continue past a critical failure without documenting it.
+
+# 18. REQUIRED DELIVERABLES
+
+The final workspace must contain:
+
+- Updated `README.md`.
+- Updated `ARCHITECTURE.md`.
+- Valid dependency lockfile.
+- Correct `.env.example`.
+- Verified VANTA Brain implementation.
+- Database lineage report.
+- Provenance integrity report.
+- Migration verification report.
+- Sidebar scrolling test report.
+- Gemini compatibility report.
+- Gemini execution report.
+- Backup SHA-256 report.
+- Restore verification report, if executed.
+- Security assessment.
+- Full test report.
+- Production build report.
+- Capability honesty matrix.
+- File-level change manifest.
+- Remaining defects register.
+- Release readiness assessment.
+
+Do not generate empty documentation placeholders.
+
+Every document must contain useful, source-grounded information.
+
+# 19. FINAL RELEASE ACCEPTANCE GATES
+
+**GATE 1:** Existing project functionality preserved.
+
+**GATE 2:** V5/V6 database lineage understood and documented.
+
+**GATE 3:** Provenance records are genuine and correctly classified.
+
+**GATE 4:** Gemini works with a verified supported model and valid credentials.
+
+**GATE 5:** Deterministic fallback remains transparent and correctly audited.
+
+**GATE 6:** Desktop and mobile scrolling behavior is browser-verified.
+
+**GATE 7:** Dependency lockfile is valid and frozen installation succeeds.
+
+**GATE 8:** README matches actual implementation.
+
+**GATE 9:** Security and tenant isolation tests pass.
+
+**GATE 10:** Database integrity and migrations pass.
+
+**GATE 11:** Automated tests and production build pass.
+
+**GATE 12:** Backup hashes and metadata are verified.
+
+A gate must not be marked complete without evidence.
+
+Use only these final statuses:
+
+- NOT_STARTED
+- INVESTIGATED
+- IMPLEMENTED
+- TESTED
+- VERIFIED
+- BLOCKED
+- PARTIALLY_COMPLETE
+
+# 20. FINAL RESPONSE FORMAT
+
+Return:
+
+1. Executive summary.
+2. V6 baseline.
+3. V5-to-V6 differences.
+4. Critical findings.
+5. Changes implemented.
+6. Gemini model compatibility and execution evidence.
+7. Brain reliability results.
+8. Database lineage and provenance results.
+9. Sidebar browser verification.
+10. Lockfile and dependency results.
+11. README and documentation changes.
+12. Security assessment.
+13. Test and build results.
+14. Backup and recovery results.
+15. Complete changed-file list.
+16. Remaining defects.
+17. Release readiness verdict.
+
+For every claim, distinguish source inspection, implementation, automated test, browser verification and live integration evidence.
+
+---
+
+# FINAL NON-NEGOTIABLE DIRECTIVE
+
+Do not rebuild VANTA AI from scratch.
+
+Do not discard existing modules.
+
+Do not overwrite newer workspace files.
+
+Do not reset the database.
+
+Do not fabricate Gemini success.
+
+Do not fabricate provenance.
+
+Do not invent model identifiers.
+
+Do not claim physical integrations are active when simulated.
+
+Do not claim tests passed unless executed.
+
+Do not claim recovery was verified unless restored and tested.
+
+Do not silently change security boundaries.
+
+Do not sacrifice existing functionality for visual improvements.
+
+Always update README.md.
+
+Always preserve backups.
+
+Always verify every important change.
+
+**VANTA AI MUST EVOLVE THROUGH VERIFIED ENGINEERING, NOT THROUGH UNVERIFIED FEATURE CLAIMS.**
+
+The final objective is a reliable, secure, maintainable and genuinely intelligent enterprise infrastructure platform.

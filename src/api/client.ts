@@ -1,5 +1,6 @@
 import type {
   BrainAnalysisResponse,
+  GeminiProviderVerificationReport,
   IndustrySector,
   PredictiveBacktestResult,
   TwinScenarioResult,
@@ -134,6 +135,10 @@ export const vantaApi = {
       method: 'POST',
       body: JSON.stringify({ query, facilityId }),
     }),
+  verifyBrainProvider: () =>
+    apiJson<GeminiProviderVerificationReport>('/api/brain/verify-provider', {
+      method: 'POST',
+    }),
   inspectCamera: (cameraId: string, goal: string) =>
     apiJson<Record<string, unknown>>('/api/vision/inspect', {
       method: 'POST',
@@ -218,6 +223,59 @@ export const vantaApi = {
     apiJson<{ ok: boolean }>(`/api/approvals/${encodeURIComponent(id)}/decide`, {
       method: 'POST',
       body: JSON.stringify({ decision, notes }),
+    }),
+  executeWorkOrder: (id: string, executionNotes: string) =>
+    apiJson<{ ok: boolean; status: string; executionMode?: string; executedAt: string }>(
+      `/api/work-orders/${encodeURIComponent(id)}/execute`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ executionNotes }),
+      }
+    ),
+  requestWorkOrderVerification: (id: string, notes?: string) =>
+    apiJson<{ ok: boolean; status: string }>(
+      `/api/work-orders/${encodeURIComponent(id)}/request-verification`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ notes }),
+      }
+    ),
+  verifyWorkOrder: (
+    id: string,
+    payload: {
+      verificationStatus: 'VERIFIED' | 'PARTIAL' | 'UNRESOLVED';
+      verificationNotes: string;
+      downtimeMinutes?: number;
+      partsReplaced?: string;
+    }
+  ) =>
+    apiJson<{ ok: boolean; status: string; verificationStatus: string; maintenanceRecordId: string }>(
+      `/api/work-orders/${encodeURIComponent(id)}/verify`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  cancelWorkOrder: (id: string, reason: string) =>
+    apiJson<{ ok: boolean; status: string }>(`/api/work-orders/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  createIncident: (payload: {
+    facilityId: string;
+    assetId?: string;
+    title: string;
+    description: string;
+    severity: string;
+  }) =>
+    apiJson<{ id: string }>('/api/incidents', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateIncidentStatus: (id: string, status: 'OPEN' | 'INVESTIGATING' | 'MITIGATED' | 'RESOLVED') =>
+    apiJson<{ ok: boolean; status: string }>(`/api/incidents/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
     }),
   executeAgent: (
     agentId: string,

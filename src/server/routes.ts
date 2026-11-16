@@ -16,20 +16,29 @@ import {
   estimateRemainingUsefulLife,
   evaluatePredictiveBacktest,
   simulateTwinCascade,
+  validateWorkOrderTransition,
 } from '../core/intelligence.ts';
 import type {
   Asset,
   AssetRelationship,
   DigitalTwinSnapshot,
   EnergyRecord,
+  EvidenceClassification,
+  EvidenceRelationType,
   Incident,
   InfrastructureEvent,
   MaintenanceRecord,
   TelemetryPoint,
   UserSession,
   VantaRole,
+  WorkOrder,
 } from '../core/types.ts';
-import { runBoundedAgentExecution, runVantaBrainQuery, runVisionFrameInspection } from './ai.ts';
+import {
+  runBoundedAgentExecution,
+  runVantaBrainQuery,
+  runVisionFrameInspection,
+  verifyGeminiProviderReadiness,
+} from './ai.ts';
 import {
   authorizeFacilityScope,
   buildFacilityInClause,
@@ -47,7 +56,7 @@ import {
   probeCameraProviderHealth,
   probeIoTConnectorHealth,
 } from './integrations.ts';
-import { observability } from './observability.ts';
+import { observability, type CorrelatedRequest } from './observability.ts';
 import { createScopedRateLimiter } from './rateLimit.ts';
 import {
   type AuthenticatedRequest,
@@ -149,13 +158,32 @@ export function createApiRouter(
     sourceModule: string;
     sourceRecordId: string;
     dataMode: string;
+    evidenceClass?: EvidenceClassification;
+    dataQualityStatus?: 'VERIFIED' | 'STALE' | 'DUPLICATE_DETECTED' | 'OUT_OF_ORDER' | 'SIMULATED_SYNTHETIC';
+    relationshipType?: EvidenceRelationType | null;
+    parentEvidenceId?: string | null;
     processingMethod: string;
     modelVersion?: string | null;
     summary: string;
   }) => {
+    const inferredClass: EvidenceClassification =
+      params.evidenceClass ||
+      (params.dataMode === 'SIMULATED'
+        ? 'SIMULATED'
+        : params.dataMode === 'ESTIMATED'
+        ? 'ESTIMATED'
+        : params.sourceModule === 'INCIDENTS'
+        ? 'HUMAN_REPORTED'
+        : params.sourceModule === 'VISION'
+        ? 'OBSERVED'
+        : 'MEASURED');
+    const qualityStatus =
+      params.dataQualityStatus ||
+      (params.dataMode === 'SIMULATED' ? 'SIMULATED_SYNTHETIC' : 'VERIFIED');
+
     db.prepare(`
-      INSERT INTO evidence_provenance (id, tenant_id, facility_id, asset_id, source_module, source_record_id, data_mode, processing_method, model_version, summary, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO evidence_provenance (id, tenant_id, facility_id, asset_id, source_module, source_record_id, data_mode, evidence_class, data_quality_status, relationship_type, parent_evidence_id, processing_method, model_version, summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       uid('prv'),
       params.tenantId,
@@ -164,6 +192,10 @@ export function createApiRouter(
       params.sourceModule,
       params.sourceRecordId,
       params.dataMode,
+      inferredClass,
+      qualityStatus,
+      params.relationshipType || null,
+      params.parentEvidenceId || null,
       params.processingMethod,
       params.modelVersion || null,
       params.summary,
@@ -292,6 +324,8 @@ export function createApiRouter(
       migrationsApplied: migRow.cnt,
       geminiConfigured: cfg.geminiConfigured,
       geminiModelId: cfg.geminiModelId,
+      geminiModelValid: cfg.geminiModelValid,
+      geminiTimeoutMs: cfg.geminiTimeoutMs,
       allowDemoAuth: cfg.allowDemoAuth,
       simulationEngine: 'READY',
       observability: observability.getSnapshot(),
@@ -309,6 +343,7 @@ export function createApiRouter(
         ready: true,
         database: 'WAL_ONLINE',
         geminiConfigured: cfg.geminiConfigured,
+        geminiModelValid: cfg.geminiModelValid,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -752,7 +787,7 @@ export function createApiRouter(
 
     const iotIntegrations = db
       .prepare(
-        `SELECT id, tenant_id as tenantId, facility_id as facilityId, name, protocol, endpoint, status, capability_state as capabilityState, polling_interval_ms as pollingIntervalMs, device_count as deviceCount, latency_ms as latencyMs, consecutive_failures as consecutiveFailures, last_error as lastError, credential_ref as credentialRef, last_heartbeat_at as lastHeartbeatAt
+        `SELECT id, tenant_id as tenantId, facility_id as facilityId, name, protocol, endpoint, status, capability_state as capabilityState, lifecycle_stage as lifecycleStage, data_freshness_sec as dataFreshnessSec, retry_status as retryStatus, polling_interval_ms as pollingIntervalMs, device_count as deviceCount, latency_ms as latencyMs, consecutive_failures as consecutiveFailures, last_error as lastError, credential_ref as credentialRef, last_heartbeat_at as lastHeartbeatAt
          FROM iot_integrations WHERE tenant_id = ? AND ${facClause.clause}`
       )
       .all(tenantId, ...facClause.params);
@@ -806,7 +841,7 @@ export function createApiRouter(
 
     const workOrders = db
       .prepare(
-        `SELECT id, tenant_id as tenantId, facility_id as facilityId, asset_id as assetId, incident_id as incidentId, title, description, priority, status, requested_by as requestedBy, approved_by as approvedBy, safety_interlock_checked as safetyInterlockChecked, created_at as createdAt, updated_at as updatedAt
+        `SELECT id, tenant_id as tenantId, facility_id as facilityId, asset_id as assetId, incident_id as incidentId, title, description, priority, status, requested_by as requestedBy, approved_by as approvedBy, safety_interlock_checked as safetyInterlockChecked, execution_notes as executionNotes, executed_by as executedBy, executed_at as executedAt, execution_mode as executionMode, verification_status as verificationStatus, verification_notes as verificationNotes, verified_by as verifiedBy, verified_at as verifiedAt, created_at as createdAt, updated_at as updatedAt
          FROM work_orders WHERE tenant_id = ? AND ${facClause.clause} ORDER BY created_at DESC`
       )
       .all(tenantId, ...facClause.params);
@@ -924,6 +959,54 @@ export function createApiRouter(
           .all(tenantId)
       : [];
 
+    const provenanceRecords = db
+      .prepare(
+        `SELECT id, source_module as sourceModule, source_record_id as sourceRecordId, asset_id as assetId, facility_id as facilityId, created_at as timestamp, data_mode as dataMode, evidence_class as evidenceClass, data_quality_status as dataQualityStatus, relationship_type as relationshipType, parent_evidence_id as parentEvidenceId, processing_method as processingMethod, model_version as modelVersion, summary
+         FROM evidence_provenance WHERE tenant_id = ? AND ${docFacClause.clause} ORDER BY created_at DESC LIMIT 60`
+      )
+      .all(tenantId, ...docFacClause.params);
+
+    const brainRunsRaw = db
+      .prepare(
+        `SELECT id, tenant_id, facility_ids_json, actor_email, query, intent, engine_used, model_id, execution_status, provider_status, failure_category, correlation_id, tools_called_json, tool_results_json, omitted_evidence_count, verified_facts_count, rejected_citations_count, latency_ms, created_at
+         FROM brain_runs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 20`
+      )
+      .all(tenantId) as Array<Record<string, unknown>>;
+
+    const brainRuns = brainRunsRaw
+      .map((r) => {
+        let facIds: string[] = [];
+        try {
+          facIds = JSON.parse(String(r.facility_ids_json || '[]')) as string[];
+        } catch {
+          facIds = [];
+        }
+        return {
+          id: String(r.id),
+          tenantId: String(r.tenant_id),
+          facilityIds: facIds,
+          actorEmail: String(r.actor_email),
+          query: String(r.query),
+          intent: String(r.intent),
+          engineUsed: (r.engine_used === 'GEMINI_4_HYDROGEN' ? 'GEMINI_4_HYDROGEN' : 'DETERMINISTIC_CORE_FALLBACK') as
+            | 'GEMINI_4_HYDROGEN'
+            | 'DETERMINISTIC_CORE_FALLBACK',
+          modelId: String(r.model_id || 'deterministic-core-v2'),
+          executionStatus: String(r.execution_status || 'DETERMINISTIC_FALLBACK'),
+          providerStatus: String(r.provider_status || 'NOT_CONFIGURED'),
+          failureCategory: r.failure_category ? String(r.failure_category) : null,
+          correlationId: r.correlation_id ? String(r.correlation_id) : null,
+          toolsCalled: JSON.parse(String(r.tools_called_json || '[]')) as string[],
+          verifiedFactsCount: Number(r.verified_facts_count || 0),
+          rejectedCitationsCount: Number(r.rejected_citations_count || 0),
+          omittedEvidenceCount: Number(r.omitted_evidence_count || 0),
+          latencyMs: Number(r.latency_ms || 0),
+          createdAt: String(r.created_at),
+        };
+      })
+      .filter((r) => r.facilityIds.length === 0 || r.facilityIds.some((fid) => effectiveFacs.includes(fid)))
+      .slice(0, 15);
+
     res.json({
       organization: org,
       sites,
@@ -949,57 +1032,114 @@ export function createApiRouter(
       auditRecords,
       knowledgeDocuments,
       twinSnapshots,
+      provenanceRecords,
+      brainRuns,
       users,
     });
   });
 
   // --- VANTA Brain Query ---
-  router.post('/brain/query', requirePermission('QUERY_BRAIN'), aiLimiter, async (req: AuthenticatedRequest, res) => {
-    const validated = validateBrainQueryBody(req.body);
-    if (!validated.ok) {
-      return res.status(400).json({ error: validated.error, fields: validated.fields });
+  router.post('/brain/query', requirePermission('QUERY_BRAIN'), aiLimiter, async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const validated = validateBrainQueryBody(req.body);
+      if (!validated.ok) {
+        return res.status(400).json({ error: validated.error, fields: validated.fields });
+      }
+      const { query, facilityId } = validated.data;
+
+      const scope = authorizeFacilityScope(req.auth!, facilityId);
+      if (!scope.allowed) {
+        logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'BRAIN_SCOPE_DENIED', 'FACILITY', facilityId || 'ALL', 'DENIED', scope.reason || 'Facility scope rejected.');
+        return res.status(403).json({ error: scope.reason });
+      }
+
+      const execId = uid('brn');
+      const correlationId = (req as CorrelatedRequest).correlationId || uid('cor');
+      const result = await runVantaBrainQuery(db, req.auth!, query, facilityId, {
+        executionId: execId,
+        correlationId,
+        config: cfg,
+      });
+
+      db.prepare(`
+        INSERT INTO brain_runs (
+          id, tenant_id, facility_ids_json, actor_email, query, intent,
+          engine_used, model_id, correlation_id, execution_status, provider_status,
+          failure_category, tools_called_json, tool_results_json, omitted_evidence_count,
+          verified_facts_count, rejected_citations_count, latency_ms, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        result.executionId || execId,
+        req.auth!.tenantId,
+        JSON.stringify(scope.effectiveFacilityIds),
+        req.auth!.email,
+        query,
+        result.intent || 'GENERAL_STATUS',
+        result.engineUsed,
+        result.modelId || cfg.geminiModelId,
+        result.correlationId || correlationId,
+        result.executionStatus || (result.engineUsed === 'GEMINI_4_HYDROGEN' ? 'GEMINI_SUCCESS' : 'DETERMINISTIC_FALLBACK'),
+        result.providerStatus || (cfg.geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED'),
+        result.failureCategory ?? null,
+        JSON.stringify(result.toolsCalled),
+        JSON.stringify(result.toolResults || []),
+        result.omittedEvidenceCount ?? 0,
+        result.verifiedFacts.length,
+        result.rejectedCitations?.length || 0,
+        result.latencyMs || 0,
+        result.createdAt
+      );
+
+      try {
+        db.exec('PRAGMA wal_checkpoint(PASSIVE);');
+      } catch {
+        // Ignore passive checkpoint contention
+      }
+
+      const auditAction =
+        result.executionStatus === 'GEMINI_SUCCESS' ? 'BRAIN_QUERY' : 'BRAIN_QUERY_FALLBACK';
+
+      logAudit(
+        req.auth!.tenantId,
+        req.auth!.email,
+        req.auth!.role,
+        auditAction,
+        'VANTA_BRAIN',
+        result.engineUsed,
+        'SUCCESS',
+        `Intent: ${result.intent} · Status: ${result.executionStatus} · Provider: ${result.providerStatus}${result.failureCategory ? ` (${result.failureCategory})` : ''} · Verified: ${result.verifiedFacts.length} · Rejected: ${result.rejectedCitations?.length || 0} · Correlation: ${result.correlationId || correlationId}`
+      );
+      return res.json(result);
+    } catch (err) {
+      return next(err);
     }
-    const { query, facilityId } = validated.data;
-
-    const scope = authorizeFacilityScope(req.auth!, facilityId);
-    if (!scope.allowed) {
-      logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'BRAIN_SCOPE_DENIED', 'FACILITY', facilityId || 'ALL', 'DENIED', scope.reason || 'Facility scope rejected.');
-      return res.status(403).json({ error: scope.reason });
-    }
-
-    const result = await runVantaBrainQuery(db, req.auth!, query, facilityId);
-
-    db.prepare(`
-      INSERT INTO brain_runs (id, tenant_id, facility_ids_json, actor_email, query, intent, engine_used, model_id, tools_called_json, verified_facts_count, rejected_citations_count, latency_ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      uid('brn'),
-      req.auth!.tenantId,
-      JSON.stringify(scope.effectiveFacilityIds),
-      req.auth!.email,
-      query,
-      result.intent || 'GENERAL_STATUS',
-      result.engineUsed,
-      result.modelId || cfg.geminiModelId,
-      JSON.stringify(result.toolsCalled),
-      result.verifiedFacts.length,
-      result.rejectedCitations?.length || 0,
-      result.latencyMs || 0,
-      result.createdAt
-    );
-
-    logAudit(
-      req.auth!.tenantId,
-      req.auth!.email,
-      req.auth!.role,
-      'BRAIN_QUERY',
-      'VANTA_BRAIN',
-      result.engineUsed,
-      'SUCCESS',
-      `Intent: ${result.intent} · Verified: ${result.verifiedFacts.length} · Rejected: ${result.rejectedCitations?.length || 0}`
-    );
-    return res.json(result);
   });
+
+  // --- VANTA Brain Live Provider Verification ---
+  router.post(
+    '/brain/verify-provider',
+    requirePermission('QUERY_BRAIN'),
+    aiLimiter,
+    async (req: AuthenticatedRequest, res, next) => {
+      try {
+        const report = await verifyGeminiProviderReadiness(db, req.auth!, { config: cfg });
+        logAudit(
+          req.auth!.tenantId,
+          req.auth!.email,
+          req.auth!.role,
+          'BRAIN_PROVIDER_VERIFY',
+          'VANTA_BRAIN',
+          report.modelId || cfg.geminiModelId,
+          'SUCCESS',
+          `Status: ${report.overallStatus} · Configured: ${report.geminiConfigured} · Steps: ${report.steps.map((s) => `${s.name}=${s.status}(${s.durationMs}ms)`).join(', ')}`
+        );
+        return res.json(report);
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
 
   // --- Vision Frame Inspection & Uploaded Image Inspection ---
   router.post('/vision/inspect', requirePermission('RUN_VISION_INSPECT'), aiLimiter, async (req: AuthenticatedRequest, res) => {
@@ -1232,6 +1372,10 @@ export function createApiRouter(
       sourceModule: 'IOT',
       sourceRecordId: result.telemetryId,
       dataMode: result.mode,
+      evidenceClass: result.mode === 'SIMULATED' ? 'SIMULATED' : 'MEASURED',
+      dataQualityStatus: result.dataQualityStatus,
+      relationshipType: result.isAnomaly ? 'REQUIRES_REVIEW' : 'SUPPORTS',
+      parentEvidenceId: validated.data.assetId,
       processingMethod: 'Normalized Gateway Ingestion + Z-Score Check',
       summary: `${validated.data.metricName}=${validated.data.value} ${validated.data.unit} (z=${result.zScore})`,
     });
@@ -1799,6 +1943,383 @@ export function createApiRouter(
     return res.json({ ok: true, status: decision });
   });
 
+  // --- Closed-Loop EXECUTE -> VERIFICATION_PENDING -> VERIFY State Machine for Work Orders ---
+  router.post('/work-orders/:id/execute', requirePermission('CREATE_WORK_ORDER'), mutationLimiter, (req: AuthenticatedRequest, res) => {
+    const executionNotes = cleanString((req.body as { executionNotes?: unknown })?.executionNotes, 5, 1000);
+    if (!executionNotes) {
+      return res.status(400).json({ error: 'Execution notes (min 5 chars) documenting field isolation & work dispatch are required.' });
+    }
+
+    const wo = db
+      .prepare('SELECT id, facility_id, asset_id, title, status FROM work_orders WHERE id = ? AND tenant_id = ?')
+      .get(req.params.id, req.auth!.tenantId) as
+      | { id: string; facility_id: string; asset_id: string; title: string; status: string }
+      | undefined;
+
+    if (!wo) return res.status(404).json({ error: 'Work order not found.' });
+    if (!isFacilityAuthorized(req.auth!, wo.facility_id)) {
+      return res.status(403).json({ error: `Facility access denied for work order '${wo.id}'.` });
+    }
+    const transition = validateWorkOrderTransition(wo.status as WorkOrder['status'], 'IN_PROGRESS', {
+      hasExecutionRecord: true,
+    });
+    if (!transition.allowed) {
+      return res.status(409).json({
+        error:
+          transition.reason ||
+          `Work order '${wo.id}' cannot be executed while in status '${wo.status}'. Human approval (APPROVED) is mandatory first.`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const updateRes = db.prepare(`
+      UPDATE work_orders
+      SET status = 'IN_PROGRESS',
+          execution_notes = ?,
+          executed_by = ?,
+          executed_at = ?,
+          execution_mode = 'FIELD_DISPATCH_RECORDED',
+          updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND status = 'APPROVED'
+    `).run(executionNotes, req.auth!.email, now, now, wo.id, req.auth!.tenantId);
+
+    if (updateRes.changes === 0) {
+      return res.status(409).json({ error: 'Concurrent state transition detected; work order is no longer in APPROVED status.' });
+    }
+
+    recordProvenance({
+      tenantId: req.auth!.tenantId,
+      facilityId: wo.facility_id,
+      assetId: wo.asset_id,
+      sourceModule: 'WORKFLOW',
+      sourceRecordId: wo.id,
+      dataMode: 'MEASURED',
+      evidenceClass: 'SYSTEM_RECORDED',
+      dataQualityStatus: 'VERIFIED',
+      relationshipType: 'DERIVED_FROM',
+      parentEvidenceId: wo.id,
+      processingMethod: 'Field Execution Dispatch Recorded (Workflow Record Only — Not Direct Equipment Control)',
+      summary: `${wo.title} — Field execution started by ${req.auth!.email}: ${executionNotes}`,
+    });
+    logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'WORK_ORDER_EXECUTED', 'WORK_ORDER', wo.id, 'SUCCESS', executionNotes);
+    return res.json({
+      ok: true,
+      status: 'IN_PROGRESS',
+      executionMode: 'FIELD_DISPATCH_RECORDED',
+      executedAt: now,
+    });
+  });
+
+  router.post('/work-orders/:id/request-verification', requirePermission('CREATE_WORK_ORDER'), mutationLimiter, (req: AuthenticatedRequest, res) => {
+    const notes = cleanString((req.body as { notes?: unknown })?.notes, 3, 1000);
+    const wo = db
+      .prepare('SELECT id, facility_id, asset_id, title, status, executed_at, execution_notes FROM work_orders WHERE id = ? AND tenant_id = ?')
+      .get(req.params.id, req.auth!.tenantId) as
+      | { id: string; facility_id: string; asset_id: string; title: string; status: string; executed_at: string | null; execution_notes: string | null }
+      | undefined;
+
+    if (!wo) return res.status(404).json({ error: 'Work order not found.' });
+    if (!isFacilityAuthorized(req.auth!, wo.facility_id)) {
+      return res.status(403).json({ error: `Facility access denied for work order '${wo.id}'.` });
+    }
+    const transition = validateWorkOrderTransition(
+      wo.status as WorkOrder['status'],
+      'VERIFICATION_PENDING',
+      { hasExecutionRecord: Boolean(wo.executed_at) }
+    );
+    if (!transition.allowed) {
+      return res.status(409).json({
+        error:
+          transition.reason ||
+          `Work order '${wo.id}' must be IN_PROGRESS with recorded field execution before entering VERIFICATION_PENDING (current: ${wo.status}).`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const updatedNotes = notes ? `${wo.execution_notes || ''} | Field work completed: ${notes}`.trim() : wo.execution_notes;
+    const upd = db.prepare(`
+      UPDATE work_orders
+      SET status = 'VERIFICATION_PENDING',
+          verification_status = 'PENDING',
+          execution_notes = ?,
+          updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND status = 'IN_PROGRESS'
+    `).run(updatedNotes, now, wo.id, req.auth!.tenantId);
+
+    if (upd.changes === 0) {
+      return res.status(409).json({ error: 'Work order state changed concurrently.' });
+    }
+
+    logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'WORK_ORDER_VERIFICATION_REQUESTED', 'WORK_ORDER', wo.id, 'SUCCESS', notes || 'Submitted for post-action verification');
+    return res.json({ ok: true, status: 'VERIFICATION_PENDING' });
+  });
+
+  router.post('/work-orders/:id/verify', requirePermission('CREATE_WORK_ORDER'), mutationLimiter, (req: AuthenticatedRequest, res) => {
+    const body = (req.body || {}) as {
+      verificationStatus?: unknown;
+      verificationNotes?: unknown;
+      downtimeMinutes?: unknown;
+      partsReplaced?: unknown;
+    };
+    const verificationStatus =
+      body.verificationStatus === 'VERIFIED' || body.verificationStatus === 'PARTIAL' || body.verificationStatus === 'UNRESOLVED'
+        ? body.verificationStatus
+        : null;
+    const verificationNotes = cleanString(body.verificationNotes, 5, 1000);
+    if (!verificationStatus || !verificationNotes) {
+      return res.status(400).json({
+        error: 'verificationStatus (VERIFIED | PARTIAL | UNRESOLVED) and verificationNotes (min 5 chars) are required.',
+      });
+    }
+    const rawDowntime = Number(body.downtimeMinutes);
+    const downtimeMinutes = Number.isFinite(rawDowntime) && rawDowntime >= 0 ? Math.min(10080, Math.round(rawDowntime)) : 30;
+    const partsReplaced = cleanString(body.partsReplaced, 1, 200) || 'None';
+
+    const wo = db
+      .prepare('SELECT id, facility_id, asset_id, title, status, executed_by, executed_at FROM work_orders WHERE id = ? AND tenant_id = ?')
+      .get(req.params.id, req.auth!.tenantId) as
+      | {
+          id: string;
+          facility_id: string;
+          asset_id: string;
+          title: string;
+          status: string;
+          executed_by: string | null;
+          executed_at: string | null;
+        }
+      | undefined;
+
+    if (!wo) return res.status(404).json({ error: 'Work order not found.' });
+    if (!isFacilityAuthorized(req.auth!, wo.facility_id)) {
+      return res.status(403).json({ error: `Facility access denied for work order '${wo.id}'.` });
+    }
+
+    // Priority Zero 4.1 & Part 14: PARTIAL and UNRESOLVED outcomes must NOT silently become COMPLETED
+    const nextStatus: WorkOrder['status'] =
+      verificationStatus === 'VERIFIED'
+        ? 'COMPLETED'
+        : verificationStatus === 'PARTIAL'
+        ? 'NEEDS_FOLLOW_UP'
+        : 'UNRESOLVED';
+
+    const transition = validateWorkOrderTransition(wo.status as WorkOrder['status'], nextStatus, {
+      hasExecutionRecord: Boolean(wo.executed_at),
+      verificationStatus,
+    });
+    if (!transition.allowed) {
+      return res.status(409).json({
+        error:
+          transition.reason ||
+          `Work order '${wo.id}' must complete field execution before outcome verification (current: ${wo.status}).`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const maintId = uid('mnt');
+    db.exec('BEGIN');
+    try {
+      const upd = db.prepare(`
+        UPDATE work_orders
+        SET status = ?,
+            verification_status = ?,
+            verification_notes = ?,
+            verified_by = ?,
+            verified_at = ?,
+            updated_at = ?
+        WHERE id = ? AND tenant_id = ?
+          AND status IN ('IN_PROGRESS', 'VERIFICATION_PENDING')
+          AND executed_at IS NOT NULL
+      `).run(nextStatus, verificationStatus, verificationNotes, req.auth!.email, now, now, wo.id, req.auth!.tenantId);
+
+      if (upd.changes === 0) {
+        db.exec('ROLLBACK');
+        return res.status(409).json({
+          error: `Work order '${wo.id}' was already verified or modified concurrently.`,
+        });
+      }
+
+      db.prepare(`
+        INSERT INTO maintenance_records (id, tenant_id, asset_id, facility_id, work_order_id, maintenance_type, performed_by, summary, downtime_minutes, parts_replaced, performed_at)
+        VALUES (?, ?, ?, ?, ?, 'CORRECTIVE', ?, ?, ?, ?, ?)
+      `).run(
+        maintId,
+        req.auth!.tenantId,
+        wo.asset_id,
+        wo.facility_id,
+        wo.id,
+        wo.executed_by || req.auth!.email,
+        `${wo.title} — Outcome [${verificationStatus} -> ${nextStatus}]: ${verificationNotes}`,
+        downtimeMinutes,
+        partsReplaced,
+        now
+      );
+
+      // Priority Zero 4.3: Do NOT arbitrarily increment asset health_score by a constant (+12).
+      // Asset health must remain derived from actual telemetry, sensor readings, and validated assessments.
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('UNIQUE') || msg.includes('idx_maint_work_order_unique')) {
+        return res.status(409).json({ error: 'Duplicate maintenance verification record prevented by idempotency constraint.' });
+      }
+      throw err;
+    }
+
+    recordProvenance({
+      tenantId: req.auth!.tenantId,
+      facilityId: wo.facility_id,
+      assetId: wo.asset_id,
+      sourceModule: 'WORKFLOW',
+      sourceRecordId: wo.id,
+      dataMode: 'MEASURED',
+      evidenceClass: 'HUMAN_REPORTED',
+      dataQualityStatus: 'VERIFIED',
+      relationshipType: verificationStatus === 'VERIFIED' ? 'VERIFIES' : 'REQUIRES_REVIEW',
+      parentEvidenceId: wo.id,
+      processingMethod: `Human Post-Action Verification (${verificationStatus} -> ${nextStatus})`,
+      summary: `${wo.title}: ${verificationNotes}`,
+    });
+    logAudit(
+      req.auth!.tenantId,
+      req.auth!.email,
+      req.auth!.role,
+      'WORK_ORDER_VERIFIED',
+      'WORK_ORDER',
+      wo.id,
+      'SUCCESS',
+      `Outcome=${verificationStatus}, Status=${nextStatus}`
+    );
+    return res.json({
+      ok: true,
+      status: nextStatus,
+      verificationStatus,
+      maintenanceRecordId: maintId,
+    });
+  });
+
+  router.post('/work-orders/:id/cancel', requirePermission('CREATE_WORK_ORDER'), mutationLimiter, (req: AuthenticatedRequest, res) => {
+    const reason = cleanString((req.body as { reason?: unknown })?.reason, 3, 500) || 'Cancelled by authorized operator.';
+    const wo = db
+      .prepare('SELECT id, facility_id, status FROM work_orders WHERE id = ? AND tenant_id = ?')
+      .get(req.params.id, req.auth!.tenantId) as { id: string; facility_id: string; status: string } | undefined;
+
+    if (!wo) return res.status(404).json({ error: 'Work order not found.' });
+    if (!isFacilityAuthorized(req.auth!, wo.facility_id)) {
+      return res.status(403).json({ error: `Facility access denied for work order '${wo.id}'.` });
+    }
+    const cancelTransition = validateWorkOrderTransition(wo.status as WorkOrder['status'], 'CANCELLED');
+    if (!cancelTransition.allowed) {
+      return res.status(409).json({
+        error:
+          cancelTransition.reason ||
+          `Work order '${wo.id}' in status '${wo.status}' cannot be cancelled after execution has started.`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    db.exec('BEGIN');
+    try {
+      db.prepare(`
+        UPDATE work_orders
+        SET status = 'CANCELLED', updated_at = ?
+        WHERE id = ? AND tenant_id = ?
+      `).run(now, wo.id, req.auth!.tenantId);
+
+      db.prepare(`
+        UPDATE approvals
+        SET status = 'REJECTED', decided_by = ?, decision_notes = ?, decided_at = ?
+        WHERE target_type = 'WORK_ORDER' AND target_id = ? AND tenant_id = ? AND status = 'PENDING'
+      `).run(req.auth!.email, `Work order cancelled: ${reason}`, now, wo.id, req.auth!.tenantId);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+
+    logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'WORK_ORDER_CANCELLED', 'WORK_ORDER', wo.id, 'SUCCESS', reason);
+    return res.json({ ok: true, status: 'CANCELLED' });
+  });
+
+  // --- Incident Logging & Lifecycle Progression ---
+  router.post('/incidents', requirePermission('CREATE_INCIDENT'), mutationLimiter, (req: AuthenticatedRequest, res) => {
+    const body = (req.body || {}) as {
+      facilityId?: unknown;
+      assetId?: unknown;
+      title?: unknown;
+      description?: unknown;
+      severity?: unknown;
+    };
+    const facilityId = isValidId(body.facilityId) ? String(body.facilityId).trim() : '';
+    const assetId = body.assetId && isValidId(body.assetId) ? String(body.assetId).trim() : null;
+    const title = cleanString(body.title, 3, 180);
+    const description = cleanString(body.description, 5, 1500);
+    const rawSeverity = typeof body.severity === 'string' ? body.severity.toUpperCase() : 'MEDIUM';
+    const severity = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'].includes(rawSeverity) ? rawSeverity : 'MEDIUM';
+
+    if (!facilityId || !title || !description) {
+      return res.status(400).json({ error: 'Valid facilityId, title (min 3 chars), and description (min 5 chars) are required.' });
+    }
+    if (!isFacilityAuthorized(req.auth!, facilityId)) {
+      return res.status(403).json({ error: `Facility access denied for facility '${facilityId}'.` });
+    }
+    if (assetId) {
+      const asset = db.prepare('SELECT id, facility_id FROM assets WHERE id = ? AND tenant_id = ?').get(assetId, req.auth!.tenantId) as { id: string; facility_id: string } | undefined;
+      if (!asset || asset.facility_id !== facilityId) {
+        return res.status(400).json({ error: 'Specified asset not found in target facility.' });
+      }
+    }
+
+    const id = uid('inc');
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO incidents (id, tenant_id, facility_id, asset_id, title, description, severity, status, assigned_to, opened_at, resolved_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, NULL)
+    `).run(id, req.auth!.tenantId, facilityId, assetId, title, description, severity, req.auth!.email, now);
+
+    recordProvenance({
+      tenantId: req.auth!.tenantId,
+      facilityId,
+      assetId,
+      sourceModule: 'INCIDENTS',
+      sourceRecordId: id,
+      dataMode: 'MEASURED',
+      evidenceClass: 'HUMAN_REPORTED',
+      dataQualityStatus: 'VERIFIED',
+      relationshipType: 'REQUIRES_REVIEW',
+      parentEvidenceId: assetId,
+      processingMethod: 'Operator Incident Escalation (Human-Reported Operational Observation)',
+      summary: `[${severity}] ${title}`,
+    });
+    logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'INCIDENT_CREATED', 'INCIDENT', id, 'SUCCESS', title);
+    return res.status(201).json({ id });
+  });
+
+  router.patch('/incidents/:id', requirePermission('CREATE_INCIDENT'), mutationLimiter, (req: AuthenticatedRequest, res) => {
+    const rawStatus = typeof (req.body as { status?: unknown })?.status === 'string'
+      ? (req.body as { status: string }).status.toUpperCase()
+      : '';
+    if (!['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED'].includes(rawStatus)) {
+      return res.status(400).json({ error: 'Status must be OPEN, INVESTIGATING, MITIGATED, or RESOLVED.' });
+    }
+    const inc = db
+      .prepare('SELECT id, facility_id, title FROM incidents WHERE id = ? AND tenant_id = ?')
+      .get(req.params.id, req.auth!.tenantId) as { id: string; facility_id: string; title: string } | undefined;
+    if (!inc) return res.status(404).json({ error: 'Incident not found.' });
+    if (!isFacilityAuthorized(req.auth!, inc.facility_id)) {
+      return res.status(403).json({ error: `Facility access denied for incident '${inc.id}'.` });
+    }
+    const now = new Date().toISOString();
+    db.prepare('UPDATE incidents SET status = ?, resolved_at = ? WHERE id = ? AND tenant_id = ?').run(
+      rawStatus,
+      rawStatus === 'RESOLVED' ? now : null,
+      inc.id,
+      req.auth!.tenantId
+    );
+    logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'INCIDENT_STATUS_UPDATED', 'INCIDENT', inc.id, 'SUCCESS', `Status -> ${rawStatus}`);
+    return res.json({ ok: true, status: rawStatus });
+  });
+
   // --- Multi-Agent Orchestrator Execution (Idempotent, Traced, Conflict-Checked) ---
   router.post('/agents/execute', requirePermission('QUERY_BRAIN'), aiLimiter, async (req: AuthenticatedRequest, res) => {
     const body = (req.body || {}) as {
@@ -1989,6 +2510,24 @@ export function createApiRouter(
       return res.status(404).json({ error: err instanceof Error ? err.message : 'Backup verification failed.' });
     }
   });
+
+  // --- Router-Level Error Boundary (Prevents Stack Trace / Secret Leakage) ---
+  router.use(
+    (
+      _err: unknown,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction
+    ) => {
+      const correlationId = (_req as CorrelatedRequest).correlationId || 'unknown';
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Internal server error encountered while processing request.',
+          correlationId,
+        });
+      }
+    }
+  );
 
   return router;
 }

@@ -3,12 +3,17 @@ import assert from 'node:assert/strict';
 import {
   canPerformAction,
   computeEnergySummary,
+  computeLifecycleStages,
+  computeNorthStarMetrics,
   computeZScoreAnomaly,
   correlateRootCauseEvidence,
   estimateRemainingUsefulLife,
   evaluatePredictiveBacktest,
+  evaluateTelemetryQuality,
+  getSectorProfile,
   requiresHumanApproval,
   simulateTwinCascade,
+  validateWorkOrderTransition,
 } from './intelligence.ts';
 import type {
   Asset,
@@ -16,7 +21,10 @@ import type {
   EnergyRecord,
   Incident,
   InfrastructureEvent,
+  PredictiveAssessment,
+  RootCauseInvestigation,
   TelemetryPoint,
+  WorkOrder,
 } from './types.ts';
 
 test('computeZScoreAnomaly detects critical spikes and normal readings accurately', () => {
@@ -298,3 +306,334 @@ test('RBAC and physical safety interlocks enforce Part 9 and Phase II backup bou
   assert.equal(requiresHumanApproval('PLC_ACTUATION'), true);
   assert.equal(requiresHumanApproval('READ_ONLY_QUERY'), false);
 });
+
+test('computeLifecycleStages returns all 11 ordered VANTA stages grounded in live records', () => {
+  const stages = computeLifecycleStages({
+    iotIntegrations: [],
+    cameras: [],
+    telemetry: [],
+    visionEvents: [],
+    assets: [],
+    relationships: [],
+    events: [],
+    incidents: [],
+    rootCauseInvestigations: [],
+    predictiveAssessments: [],
+    approvals: [],
+    workOrders: [],
+  });
+  assert.equal(stages.length, 11);
+  assert.equal(stages[0].stage, 'CONNECT');
+  assert.equal(stages[10].stage, 'VERIFY');
+  assert.equal(stages[0].status, 'NOT_CONFIGURED');
+});
+
+test('computeNorthStarMetrics computes honest measured vs unverified ratios without fabricating data', () => {
+  const workOrders: WorkOrder[] = [
+    {
+      id: 'wo-1',
+      tenantId: 't1',
+      facilityId: 'f1',
+      assetId: 'a1',
+      incidentId: null,
+      title: 'Inspect Pump',
+      description: 'Seal flush',
+      priority: 'HIGH',
+      status: 'COMPLETED',
+      requestedBy: 'ops@test',
+      approvedBy: 'mgr@test',
+      safetyInterlockChecked: true,
+      verificationStatus: 'VERIFIED',
+      createdAt: '2026-11-12T00:00:00Z',
+      updatedAt: '2026-11-12T01:00:00Z',
+    },
+    {
+      id: 'wo-2',
+      tenantId: 't1',
+      facilityId: 'f1',
+      assetId: 'a1',
+      incidentId: null,
+      title: 'Check Fan',
+      description: 'Belt check',
+      priority: 'LOW',
+      status: 'COMPLETED',
+      requestedBy: 'ops@test',
+      approvedBy: 'mgr@test',
+      safetyInterlockChecked: true,
+      verificationStatus: 'PENDING',
+      createdAt: '2026-11-12T00:00:00Z',
+      updatedAt: '2026-11-12T01:00:00Z',
+    },
+  ];
+  const predictive: PredictiveAssessment[] = [
+    {
+      id: 'p1',
+      tenantId: 't1',
+      assetId: 'a1',
+      facilityId: 'f1',
+      failureMode: 'Thermal',
+      riskScore: 70,
+      rulHours: 40,
+      uncertaintyHours: 8,
+      methodology: 'Z-Score',
+      dataSource: 'OPC UA',
+      validationStatus: 'STATISTICAL_ZSCORE',
+      recommendedAction: 'Inspect',
+      mode: 'MEASURED',
+      computedAt: '2026-11-12T00:00:00Z',
+    },
+  ];
+  const metrics = computeNorthStarMetrics({
+    incidents: [],
+    rootCauseInvestigations: [] as RootCauseInvestigation[],
+    workOrders,
+    predictiveAssessments: predictive,
+    energyRecords: [],
+  });
+  assert.equal(metrics.incidentTriageCoveragePct, null);
+  assert.equal(metrics.verifiedOutcomeRatePct, 50);
+  assert.equal(metrics.predictiveEvidenceCoveragePct, 100);
+  assert.equal(metrics.measuredEnergySharePct, null);
+  assert.equal(metrics.safetyInterlockCompliancePct, 100);
+
+  const sector = getSectorProfile('Data Center Operations');
+  assert.ok(sector.monitoredEquipmentClasses.some((c) => c.includes('UPS')));
+  assert.equal(metrics.ratios.verifiedOutcome.numerator, 1);
+  assert.equal(metrics.ratios.verifiedOutcome.denominator, 2);
+
+  // Priority Zero 4.4: Zero denominator MUST return null, never 100%
+  const emptyMetrics = computeNorthStarMetrics({
+    incidents: [],
+    rootCauseInvestigations: [],
+    workOrders: [],
+    predictiveAssessments: [],
+    energyRecords: [],
+  });
+  assert.equal(emptyMetrics.safetyInterlockCompliancePct, null);
+  assert.equal(emptyMetrics.verifiedOutcomeRatePct, null);
+  assert.equal(emptyMetrics.incidentTriageCoveragePct, null);
+  assert.equal(emptyMetrics.predictiveEvidenceCoveragePct, null);
+  assert.equal(emptyMetrics.measuredEnergySharePct, null);
+
+  // Priority Zero 4.2 & 4.4: LEGACY_UNVERIFIED work orders do not inflate verified outcome rate,
+  // while NEEDS_FOLLOW_UP and UNRESOLVED count in evaluated post-execution denominator
+  const mixedOutcomes = computeNorthStarMetrics({
+    incidents: [],
+    rootCauseInvestigations: [],
+    workOrders: [
+      {
+        ...workOrders[0],
+        id: 'wo-legacy',
+        status: 'COMPLETED',
+        verificationStatus: 'LEGACY_UNVERIFIED',
+      },
+      {
+        ...workOrders[0],
+        id: 'wo-verified',
+        status: 'COMPLETED',
+        verificationStatus: 'VERIFIED',
+      },
+      {
+        ...workOrders[0],
+        id: 'wo-partial',
+        status: 'NEEDS_FOLLOW_UP',
+        verificationStatus: 'PARTIAL',
+      },
+      {
+        ...workOrders[0],
+        id: 'wo-unresolved',
+        status: 'UNRESOLVED',
+        verificationStatus: 'UNRESOLVED',
+      },
+    ],
+    predictiveAssessments: [],
+    energyRecords: [],
+  });
+  assert.equal(mixedOutcomes.legacyUnverifiedWorkOrdersCount, 1);
+  assert.equal(mixedOutcomes.verifiedWorkOrdersCount, 1);
+  assert.equal(mixedOutcomes.needsFollowUpWorkOrdersCount, 1);
+  assert.equal(mixedOutcomes.unresolvedWorkOrdersCount, 1);
+  assert.equal(mixedOutcomes.ratios.verifiedOutcome.numerator, 1);
+  assert.equal(mixedOutcomes.ratios.verifiedOutcome.denominator, 3);
+  assert.equal(mixedOutcomes.verifiedOutcomeRatePct, 33);
+});
+
+test('computeLifecycleStages strictly separates physical vs simulated connectors and telemetry (Priority Zero 4.5)', () => {
+  const stages = computeLifecycleStages({
+    iotIntegrations: [
+      {
+        id: 'iot-sim',
+        tenantId: 't1',
+        facilityId: 'f1',
+        name: 'Simulated Broker',
+        protocol: 'MQTT',
+        endpoint: 'mqtt://broker.internal',
+        status: 'SIMULATED',
+        capabilityState: 'SIMULATED',
+        pollingIntervalMs: 5000,
+        deviceCount: 4,
+        lastHeartbeatAt: '2026-11-15T00:00:00Z',
+      },
+      {
+        id: 'iot-phys',
+        tenantId: 't1',
+        facilityId: 'f1',
+        name: 'Physical Gateway',
+        protocol: 'OPC_UA',
+        endpoint: 'opc.tcp://10.0.0.10:4840',
+        status: 'CONNECTED',
+        capabilityState: 'FUNCTIONAL',
+        pollingIntervalMs: 2000,
+        deviceCount: 8,
+        lastHeartbeatAt: '2026-11-15T01:00:00Z',
+      },
+    ],
+    cameras: [],
+    telemetry: [],
+    visionEvents: [],
+    assets: [],
+    relationships: [],
+    events: [],
+    incidents: [],
+    rootCauseInvestigations: [],
+    predictiveAssessments: [],
+    approvals: [],
+    workOrders: [],
+  });
+
+  const connectStage = stages.find((s) => s.stage === 'CONNECT')!;
+  assert.equal(connectStage.physicalCount, 1);
+  assert.equal(connectStage.simulatedCount, 1);
+  assert.equal(connectStage.count, 2);
+  assert.ok(connectStage.summary.includes('1 physical'));
+  assert.ok(connectStage.summary.includes('1 simulated'));
+
+  // Verify all 8 industry sector profiles resolve distinctly
+  const industries = [
+    'Manufacturing & Industrial Production',
+    'Energy & Power Infrastructure',
+    'Data Centers',
+    'Airports & Transportation',
+    'Hospitals & Healthcare Infrastructure',
+    'Commercial Buildings & Campuses',
+    'Logistics & Supply Chain',
+    'Smart Infrastructure',
+  ];
+  const resolvedSectors = new Set(industries.map((ind) => getSectorProfile(ind).sector));
+  assert.equal(resolvedSectors.size, 8);
+});
+
+test('validateWorkOrderTransition enforces Part 14 state machine and blocks verification before execution', () => {
+  assert.equal(validateWorkOrderTransition('CREATED', 'PENDING_APPROVAL').allowed, true);
+  assert.equal(validateWorkOrderTransition('CREATED', 'COMPLETED').allowed, false);
+  assert.equal(validateWorkOrderTransition('PENDING_APPROVAL', 'APPROVED').allowed, true);
+  assert.equal(validateWorkOrderTransition('PENDING_APPROVAL', 'IN_PROGRESS').allowed, false);
+
+  // Cannot bypass execution from APPROVED directly to COMPLETED or VERIFICATION_PENDING
+  assert.equal(validateWorkOrderTransition('APPROVED', 'COMPLETED').allowed, false);
+  assert.equal(validateWorkOrderTransition('APPROVED', 'VERIFICATION_PENDING').allowed, false);
+  assert.equal(
+    validateWorkOrderTransition('APPROVED', 'IN_PROGRESS', { hasExecutionRecord: true }).allowed,
+    true
+  );
+
+  // In-progress requires execution record to enter VERIFICATION_PENDING or verify
+  assert.equal(
+    validateWorkOrderTransition('IN_PROGRESS', 'VERIFICATION_PENDING', { hasExecutionRecord: true }).allowed,
+    true
+  );
+
+  // PARTIAL must map to NEEDS_FOLLOW_UP, never COMPLETED
+  assert.equal(
+    validateWorkOrderTransition('VERIFICATION_PENDING', 'COMPLETED', {
+      hasExecutionRecord: true,
+      verificationStatus: 'PARTIAL',
+    }).allowed,
+    false
+  );
+  assert.equal(
+    validateWorkOrderTransition('VERIFICATION_PENDING', 'NEEDS_FOLLOW_UP', {
+      hasExecutionRecord: true,
+      verificationStatus: 'PARTIAL',
+    }).allowed,
+    true
+  );
+
+  // UNRESOLVED must map to UNRESOLVED, never COMPLETED
+  assert.equal(
+    validateWorkOrderTransition('VERIFICATION_PENDING', 'UNRESOLVED', {
+      hasExecutionRecord: true,
+      verificationStatus: 'UNRESOLVED',
+    }).allowed,
+    true
+  );
+
+  // VERIFIED maps to COMPLETED
+  assert.equal(
+    validateWorkOrderTransition('VERIFICATION_PENDING', 'COMPLETED', {
+      hasExecutionRecord: true,
+      verificationStatus: 'VERIFIED',
+    }).allowed,
+    true
+  );
+
+  // Terminal states cannot transition
+  assert.equal(validateWorkOrderTransition('COMPLETED', 'IN_PROGRESS').allowed, false);
+  assert.equal(validateWorkOrderTransition('CANCELLED', 'APPROVED').allowed, false);
+  assert.equal(validateWorkOrderTransition('IN_PROGRESS', 'CANCELLED').allowed, false);
+});
+
+test('evaluateTelemetryQuality detects duplicates, out-of-order timestamps, staleness, and Part 15 KPI metadata', () => {
+  const nowMs = Date.parse('2026-11-15T12:00:00.000Z');
+  const basePoint: TelemetryPoint = {
+    id: 'tp-1',
+    tenantId: 't1',
+    facilityId: 'f1',
+    assetId: 'ast-1',
+    metricName: 'Spindle Temp',
+    value: 52.4,
+    unit: '°C',
+    thresholdWarn: 70,
+    thresholdCrit: 85,
+    zScore: 0.4,
+    isAnomaly: false,
+    mode: 'MEASURED',
+    timestamp: '2026-11-15T11:55:00.000Z',
+  };
+
+  const healthy = evaluateTelemetryQuality([basePoint], nowMs);
+  assert.equal(healthy.sensorHealth, 'HEALTHY');
+  assert.equal(healthy.completenessPct, 100);
+  assert.equal(healthy.measuredSharePct, 100);
+  assert.equal(healthy.duplicateCount, 0);
+
+  const dup = evaluateTelemetryQuality([basePoint, { ...basePoint, id: 'tp-2' }], nowMs);
+  assert.equal(dup.duplicateCount, 1);
+  assert.equal(dup.sensorHealth, 'DUPLICATE_DETECTED');
+
+  const outOfOrder = evaluateTelemetryQuality(
+    [
+      basePoint,
+      { ...basePoint, id: 'tp-early', value: 51.0, timestamp: '2026-11-15T11:40:00.000Z' },
+    ],
+    nowMs
+  );
+  assert.equal(outOfOrder.outOfOrderCount, 1);
+  assert.equal(outOfOrder.sensorHealth, 'OUT_OF_ORDER');
+
+  // Verify Part 15 KPI metadata fields
+  const kpi = computeNorthStarMetrics({
+    incidents: [],
+    rootCauseInvestigations: [],
+    workOrders: [],
+    predictiveAssessments: [],
+    energyRecords: [],
+  });
+  assert.ok(kpi.ratios.verifiedOutcome.formula.includes('human_verified'));
+  assert.ok(kpi.ratios.verifiedOutcome.source.includes('HUMAN_REPORTED'));
+  assert.equal(kpi.ratios.verifiedOutcome.dataQuality, 'INSUFFICIENT_DATA');
+  assert.equal(kpi.ratios.verifiedOutcome.drillDownSection, 'operations');
+});
+
+
+

@@ -326,46 +326,100 @@ export function validateStructuredBrainOutput(raw: unknown): {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
 
-  const verifiedFacts = Array.isArray(obj.verifiedFacts)
-    ? obj.verifiedFacts
-        .filter((f): f is Record<string, unknown> => Boolean(f && typeof f === 'object'))
-        .map((f) => ({
-          claim: typeof f.claim === 'string' ? f.claim.trim() : '',
-          sourceId: typeof f.sourceId === 'string' ? f.sourceId.trim() : '',
-          module: typeof f.module === 'string' ? f.module.trim() : 'CORE',
-        }))
-        .filter((f) => f.claim.length > 0 && f.sourceId.length > 0)
-    : [];
+  // Section 5.8: Strictly require all schema arrays and uncertaintyNote to be present with valid types
+  if (
+    !Array.isArray(obj.verifiedFacts) ||
+    !Array.isArray(obj.observations) ||
+    !Array.isArray(obj.assumptionsAndHypotheses) ||
+    !Array.isArray(obj.predictions) ||
+    !Array.isArray(obj.unknowns) ||
+    !Array.isArray(obj.recommendations) ||
+    typeof obj.uncertaintyNote !== 'string' ||
+    obj.uncertaintyNote.trim().length === 0
+  ) {
+    return null;
+  }
 
-  const toStringList = (val: unknown) =>
-    Array.isArray(val)
-      ? val.filter((s): s is string => typeof s === 'string' && s.trim().length > 0).map((s) => s.trim())
-      : [];
+  for (const item of obj.verifiedFacts) {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      typeof (item as Record<string, unknown>).claim !== 'string' ||
+      typeof (item as Record<string, unknown>).sourceId !== 'string' ||
+      typeof (item as Record<string, unknown>).module !== 'string'
+    ) {
+      return null;
+    }
+  }
 
-  const recommendations = Array.isArray(obj.recommendations)
-    ? obj.recommendations
-        .filter((r): r is Record<string, unknown> => Boolean(r && typeof r === 'object'))
-        .map((r) => ({
-          action: typeof r.action === 'string' ? r.action.trim() : '',
-          priority: (VALID_SEVERITIES.includes(String(r.priority).toUpperCase() as SeverityLevel)
-            ? String(r.priority).toUpperCase()
-            : 'MEDIUM') as SeverityLevel,
-          requiresHumanApproval: Boolean(r.requiresHumanApproval),
-          rationale: typeof r.rationale === 'string' ? r.rationale.trim() : '',
-        }))
-        .filter((r) => r.action.length > 0)
-    : [];
+  const verifiedFacts = obj.verifiedFacts
+    .map((f) => {
+      const rec = f as Record<string, unknown>;
+      return {
+        claim: String(rec.claim).trim().slice(0, 600),
+        sourceId: String(rec.sourceId).trim().slice(0, 120),
+        module: String(rec.module).trim().slice(0, 80) || 'CORE',
+      };
+    })
+    .filter((f) => f.claim.length > 0 && f.sourceId.length > 0);
+
+  const toStringList = (val: unknown[]): string[] | null => {
+    const out: string[] = [];
+    for (const s of val) {
+      if (typeof s !== 'string') return null;
+      const trimmed = s.trim().slice(0, 600);
+      if (trimmed.length > 0) out.push(trimmed);
+    }
+    return out;
+  };
+
+  const observations = toStringList(obj.observations);
+  const assumptionsAndHypotheses = toStringList(obj.assumptionsAndHypotheses);
+  const predictions = toStringList(obj.predictions);
+  const unknowns = toStringList(obj.unknowns);
+
+  if (!observations || !assumptionsAndHypotheses || !predictions || !unknowns) {
+    return null;
+  }
+
+  if (observations.length === 0 && verifiedFacts.length === 0) {
+    return null;
+  }
+
+  const recommendations: BrainAnalysisResponse['recommendations'] = [];
+  for (const r of obj.recommendations) {
+    if (!r || typeof r !== 'object') return null;
+    const rec = r as Record<string, unknown>;
+    if (
+      typeof rec.action !== 'string' ||
+      typeof rec.priority !== 'string' ||
+      typeof rec.requiresHumanApproval !== 'boolean' ||
+      typeof rec.rationale !== 'string'
+    ) {
+      return null;
+    }
+    const upperPriority = rec.priority.trim().toUpperCase() as SeverityLevel;
+    if (!VALID_SEVERITIES.includes(upperPriority)) {
+      return null;
+    }
+    const action = rec.action.trim().slice(0, 500);
+    if (action.length > 0) {
+      recommendations.push({
+        action,
+        priority: upperPriority,
+        requiresHumanApproval: rec.requiresHumanApproval,
+        rationale: rec.rationale.trim().slice(0, 600),
+      });
+    }
+  }
 
   return {
     verifiedFacts,
-    observations: toStringList(obj.observations),
-    assumptionsAndHypotheses: toStringList(obj.assumptionsAndHypotheses),
-    predictions: toStringList(obj.predictions),
-    unknowns: toStringList(obj.unknowns),
+    observations,
+    assumptionsAndHypotheses,
+    predictions,
+    unknowns,
     recommendations,
-    uncertaintyNote:
-      typeof obj.uncertaintyNote === 'string' && obj.uncertaintyNote.trim()
-        ? obj.uncertaintyNote.trim()
-        : 'Uncertainty bounds derived from available tenant-scoped evidence.',
+    uncertaintyNote: obj.uncertaintyNote.trim().slice(0, 800),
   };
 }

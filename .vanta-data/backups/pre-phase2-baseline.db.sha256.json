@@ -1,0 +1,10 @@
+{
+  "filename": "pre-phase2-baseline.db",
+  "filePath": "/app/applet/.vanta-data/backups/pre-phase2-baseline.db",
+  "sizeBytes": 229376,
+  "sha256": "0cd49affc9870c71b593ab5ffb1966d8b8bb469f43aabdf4bf2472d3e3258b45",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-16T12:28:00.907Z",
+  "backupType": "FILE_SNAPSHOT",
+  "schemaVersion": null
+}

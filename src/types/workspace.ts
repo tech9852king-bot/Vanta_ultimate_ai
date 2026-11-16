@@ -5,10 +5,12 @@ import type {
   Asset,
   AssetRelationship,
   AuditRecord,
+  BrainRunRecord,
   BuildingZone,
   Camera,
   DigitalTwinSnapshot,
   EnergyRecord,
+  EvidenceProvenanceRecord,
   Facility,
   Incident,
   InfrastructureEvent,
@@ -52,6 +54,8 @@ export interface WorkspaceData {
   auditRecords: AuditRecord[];
   knowledgeDocuments: KnowledgeDocument[];
   twinSnapshots?: DigitalTwinSnapshot[];
+  provenanceRecords?: EvidenceProvenanceRecord[];
+  brainRuns?: BrainRunRecord[];
   users: Array<{
     id: string;
     tenantId: string;
@@ -70,6 +74,8 @@ export interface SystemHealthStatus {
   migrationsApplied?: number;
   geminiConfigured: boolean;
   geminiModelId?: string;
+  geminiModelValid?: boolean;
+  geminiTimeoutMs?: number;
   allowDemoAuth?: boolean;
   simulationEngine: string;
   observability?: {
@@ -100,4 +106,6 @@ export interface BackupMetadataDto {
   sha256: string;
   integrityCheck: string;
   createdAt: string;
+  backupType?: string;
+  schemaVersion?: string | null;
 }

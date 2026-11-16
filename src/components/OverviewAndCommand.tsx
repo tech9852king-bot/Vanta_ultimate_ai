@@ -1,7 +1,22 @@
 import React from 'react';
+import { computeLifecycleStages, computeNorthStarMetrics } from '../core/intelligence';
 import type { NavigationSection } from '../core/types';
 import type { WorkspaceData } from '../types/workspace';
 import { ModuleHeader, StatusText, TelemetryChart } from './StatusText';
+
+const STAGE_ROUTE: Record<string, NavigationSection> = {
+  CONNECT: 'integrations',
+  COLLECT: 'iot-telemetry',
+  NORMALIZE: 'iot-telemetry',
+  CONTEXTUALIZE: 'infrastructure',
+  ANALYZE: 'command-center',
+  CORRELATE: 'root-cause-analysis',
+  PREDICT: 'predictive-maintenance',
+  RECOMMEND: 'operations-workflows',
+  APPROVE: 'operations-workflows',
+  EXECUTE: 'operations-workflows',
+  VERIFY: 'operations-workflows',
+};
 
 export function OverviewView({
   data,
@@ -17,6 +32,7 @@ export function OverviewView({
     data.assets.length > 0
       ? Math.round(data.assets.reduce((acc, a) => acc + a.healthScore, 0) / data.assets.length)
       : 0;
+  const lifecycleStages = computeLifecycleStages(data);
 
   return (
     <div className="space-y-6">
@@ -78,6 +94,67 @@ export function OverviewView({
           </div>
         </div>
       </div>
+
+      {/* 11-Stage VANTA Intelligence Lifecycle */}
+      <section className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-3" data-testid="intelligence-lifecycle">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E293B] pb-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-100">VANTA Intelligence Lifecycle (11 Stages)</h2>
+            <p className="text-xs text-slate-400">
+              End-to-end operational pipeline from physical gateway collection through human-governed execution and outcome verification.
+            </p>
+          </div>
+          <span className="text-xs font-mono text-sky-400">CONNECT → EXECUTE → VERIFY</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {lifecycleStages.map((st) => {
+            const borderTone =
+              st.status === 'ACTIVE'
+                ? 'border-emerald-800/60'
+                : st.status === 'ATTENTION'
+                ? 'border-amber-700/70'
+                : st.status === 'NOT_CONFIGURED'
+                ? 'border-rose-800/60'
+                : 'border-[#1E293B]';
+            const dotTone =
+              st.status === 'ACTIVE'
+                ? 'text-emerald-400'
+                : st.status === 'ATTENTION'
+                ? 'text-amber-400'
+                : st.status === 'NOT_CONFIGURED'
+                ? 'text-rose-400'
+                : 'text-slate-400';
+            return (
+              <button
+                key={st.stage}
+                type="button"
+                onClick={() => onNavigate(STAGE_ROUTE[st.stage] || 'overview')}
+                title={st.summary}
+                className={`text-left p-3 rounded-md bg-[#0B0F17] border ${borderTone} hover:border-sky-500/70 transition-colors flex flex-col justify-between gap-1.5`}
+              >
+                <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-500">
+                  <span>STAGE {String(st.order).padStart(2, '0')}</span>
+                  <span className={dotTone}>{st.status === 'NOT_CONFIGURED' ? 'OFF' : st.status}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-100">{st.label}</span>
+                  <span className="text-sm font-mono font-semibold text-sky-300 tabular-nums">{st.count}</span>
+                </div>
+                <div className="text-[11px] text-slate-400 truncate">{st.summary}</div>
+                <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-[#1E293B]/70">
+                  <span>Phys: {st.physicalCount}</span>
+                  <span>Sim: {st.simulatedCount}</span>
+                </div>
+                {st.blockers.length > 0 && (
+                  <div className="text-[10px] font-mono text-amber-400 truncate" title={st.blockers.join(' | ')}>
+                    ! {st.blockers[0]}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Facility Portfolio Grid */}
       <section className="space-y-3">
@@ -358,6 +435,13 @@ export function AnalyticsReportsView({ data }: { data: WorkspaceData }) {
   const totalDowntime = data.maintenanceRecords.reduce((acc, m) => acc + m.downtimeMinutes, 0);
   const anomaliesCount = data.telemetry.filter((t) => t.isAnomaly).length;
   const approvedWorkOrders = data.workOrders.filter((w) => w.status === 'APPROVED' || w.status === 'COMPLETED').length;
+  const northStar = computeNorthStarMetrics({
+    incidents: data.incidents,
+    rootCauseInvestigations: data.rootCauseInvestigations,
+    workOrders: data.workOrders,
+    predictiveAssessments: data.predictiveAssessments,
+    energyRecords: data.energyRecords,
+  });
 
   const exportCsv = () => {
     const headers = ['AssetCode', 'AssetName', 'Type', 'Status', 'HealthScore', 'DataMode'];
@@ -375,7 +459,7 @@ export function AnalyticsReportsView({ data }: { data: WorkspaceData }) {
     <div className="space-y-6">
       <ModuleHeader
         title="Analytics & Operational Reports"
-        subtitle="Verified operational KPIs, downtime aggregation, incident distribution, and downloadable audit-ready asset reports."
+        subtitle="Verified operational KPIs, North Star outcome tracking, downtime aggregation, and downloadable audit-ready asset reports."
         capability="FUNCTIONAL"
         dataMode="MIXED"
         actions={
@@ -413,6 +497,107 @@ export function AnalyticsReportsView({ data }: { data: WorkspaceData }) {
           <div className="text-xs text-slate-400 mt-1 font-mono">MEASURED meter scope only</div>
         </div>
       </div>
+
+      {/* Section 4.4 & Part 15: Honest North Star Outcome Measures with Formula, Source, Time Window & Data Quality */}
+      <section className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E293B] pb-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-100">North Star Operational Outcome Measures</h2>
+            <p className="text-xs text-slate-400">{northStar.epistemicNote}</p>
+          </div>
+          <StatusText value="MEASURED" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-xs">
+          <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-slate-400">Incident RCA Corroboration</span>
+              <span className="text-[10px] font-mono text-emerald-400">{northStar.ratios.incidentTriage.dataQuality}</span>
+            </div>
+            <div className="text-lg font-mono font-semibold text-slate-100 tabular-nums">
+              {northStar.incidentTriageCoveragePct !== null ? `${northStar.incidentTriageCoveragePct}%` : 'INSUFFICIENT DATA'}
+            </div>
+            <div className="text-[11px] font-mono text-sky-300">
+              n = {northStar.ratios.incidentTriage.numerator} / {northStar.ratios.incidentTriage.denominator} incidents
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">
+              Formula: {northStar.ratios.incidentTriage.formula}
+            </div>
+            <div className="text-[10px] text-slate-500">
+              Source: {northStar.ratios.incidentTriage.source} · Window: {northStar.ratios.incidentTriage.timeWindow}
+            </div>
+          </div>
+          <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-slate-400">Verified Action Resolution</span>
+              <span className="text-[10px] font-mono text-emerald-400">{northStar.ratios.verifiedOutcome.dataQuality}</span>
+            </div>
+            <div className="text-lg font-mono font-semibold text-emerald-400 tabular-nums">
+              {northStar.verifiedOutcomeRatePct !== null ? `${northStar.verifiedOutcomeRatePct}%` : 'INSUFFICIENT DATA'}
+            </div>
+            <div className="text-[11px] font-mono text-emerald-300">
+              n = {northStar.ratios.verifiedOutcome.numerator} / {northStar.ratios.verifiedOutcome.denominator} evaluated orders
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">
+              Formula: {northStar.ratios.verifiedOutcome.formula}
+            </div>
+            <div className="text-[10px] text-slate-500">
+              Verified: {northStar.verifiedWorkOrdersCount} · Follow-Up: {northStar.needsFollowUpWorkOrdersCount} · Unresolved: {northStar.unresolvedWorkOrdersCount} · Legacy: {northStar.legacyUnverifiedWorkOrdersCount}
+            </div>
+          </div>
+          <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-slate-400">Evidence-Backed Predictive</span>
+              <span className="text-[10px] font-mono text-sky-400">{northStar.ratios.predictiveEvidence.dataQuality}</span>
+            </div>
+            <div className="text-lg font-mono font-semibold text-sky-400 tabular-nums">
+              {northStar.predictiveEvidenceCoveragePct !== null ? `${northStar.predictiveEvidenceCoveragePct}%` : 'INSUFFICIENT DATA'}
+            </div>
+            <div className="text-[11px] font-mono text-sky-300">
+              n = {northStar.ratios.predictiveEvidence.numerator} / {northStar.ratios.predictiveEvidence.denominator} assessments
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">
+              Formula: {northStar.ratios.predictiveEvidence.formula}
+            </div>
+            <div className="text-[10px] text-slate-500">
+              Rule: {northStar.ruleVerifiedAssessmentsCount} · Z-Score: {northStar.statisticalAssessmentsCount} · Sim: {northStar.simulatedAssessmentsCount}
+            </div>
+          </div>
+          <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-slate-400">Measured Energy Metering</span>
+              <span className="text-[10px] font-mono text-amber-400">{northStar.ratios.measuredEnergy.dataQuality}</span>
+            </div>
+            <div className="text-lg font-mono font-semibold text-slate-100 tabular-nums">
+              {northStar.measuredEnergySharePct !== null ? `${northStar.measuredEnergySharePct}%` : 'INSUFFICIENT DATA'}
+            </div>
+            <div className="text-[11px] font-mono text-emerald-300">
+              {northStar.measuredEnergyKwh.toLocaleString()} / {(northStar.measuredEnergyKwh + northStar.estimatedEnergyKwh + northStar.simulatedEnergyKwh).toLocaleString()} kWh
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">
+              Formula: {northStar.ratios.measuredEnergy.formula}
+            </div>
+            <div className="text-[10px] text-slate-500">
+              Est: {northStar.estimatedEnergyKwh.toLocaleString()} kWh · Sim: {northStar.simulatedEnergyKwh.toLocaleString()} kWh
+            </div>
+          </div>
+          <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-slate-400">Safety Interlock Compliance</span>
+              <span className="text-[10px] font-mono text-emerald-400">{northStar.ratios.safetyInterlock.dataQuality}</span>
+            </div>
+            <div className="text-lg font-mono font-semibold text-emerald-400 tabular-nums">
+              {northStar.safetyInterlockCompliancePct !== null ? `${northStar.safetyInterlockCompliancePct}%` : 'INSUFFICIENT DATA'}
+            </div>
+            <div className="text-[11px] font-mono text-emerald-300">
+              n = {northStar.ratios.safetyInterlock.numerator} / {northStar.ratios.safetyInterlock.denominator} work orders
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">
+              Formula: {northStar.ratios.safetyInterlock.formula}
+            </div>
+            <div className="text-[10px] text-slate-500">{northStar.ratios.safetyInterlock.methodology}</div>
+          </div>
+        </div>
+      </section>
 
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
         <div className="px-5 py-3.5 border-b border-[#1E293B]">

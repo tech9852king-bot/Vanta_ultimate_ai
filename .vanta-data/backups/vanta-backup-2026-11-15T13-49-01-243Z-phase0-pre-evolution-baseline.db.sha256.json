@@ -1,0 +1,10 @@
+{
+  "filename": "vanta-backup-2026-11-15T13-49-01-243Z-phase0-pre-evolution-baseline.db",
+  "filePath": "/app/applet/.vanta-data/backups/vanta-backup-2026-11-15T13-49-01-243Z-phase0-pre-evolution-baseline.db",
+  "sizeBytes": 307200,
+  "sha256": "8dd9b3e139d79973aec8abe7fbb02849e907e74d4b35b9fbeec49ebae7bb1382",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-15T13:49:01.254Z",
+  "backupType": "VACUUM_INTO",
+  "schemaVersion": "004_workorder_execution_verification"
+}

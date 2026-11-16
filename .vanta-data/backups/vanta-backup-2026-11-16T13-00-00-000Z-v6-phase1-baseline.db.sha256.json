@@ -1,0 +1,10 @@
+{
+  "filename": "vanta-backup-2026-11-16T13-00-00-000Z-v6-phase1-baseline.db",
+  "filePath": "/app/applet/.vanta-data/backups/vanta-backup-2026-11-16T13-00-00-000Z-v6-phase1-baseline.db",
+  "sizeBytes": 319488,
+  "sha256": "e35c9266f70c4ac9f46c1ce44d6caf1974e31687c230a043e23c69f8f3026820",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-16T13:00:36.902Z",
+  "backupType": "VACUUM_INTO",
+  "schemaVersion": "007_v4_brain_observability_and_provenance"
+}

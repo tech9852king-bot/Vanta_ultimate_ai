@@ -1,0 +1,10 @@
+{
+  "filename": "vanta-backup-2026-11-15T15-10-21-216Z-v4-baseline.db",
+  "filePath": "/app/applet/.vanta-data/backups/vanta-backup-2026-11-15T15-10-21-216Z-v4-baseline.db",
+  "sizeBytes": 319488,
+  "sha256": "5a8aae22dbc1fce16d6851af86700f17d58d68dece073e6a3ce757f7c8395679",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-15T15:10:21.224Z",
+  "backupType": "VACUUM_INTO",
+  "schemaVersion": "006_evidence_engine_and_connector_lifecycle"
+}

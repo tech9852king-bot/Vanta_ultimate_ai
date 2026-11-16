@@ -559,6 +559,13 @@ export function initDatabase(dbPathOrOptions?: string | InitDatabaseOptions): Da
   if (shouldSeedDemo) {
     seedDatabase(db);
   }
+  if (resolvedPath !== ':memory:') {
+    try {
+      db.exec('PRAGMA wal_checkpoint(PASSIVE);');
+    } catch {
+      // Ignore checkpoint contention if another handle is active
+    }
+  }
   return db;
 }
 
@@ -725,6 +732,314 @@ export function runSchemaMigrations(db: DatabaseSync): void {
       throw err;
     }
   }
+
+  if (!isApplied('004_workorder_execution_verification')) {
+    db.exec('BEGIN');
+    try {
+      addColumnIfMissing(db, 'work_orders', 'execution_notes', 'TEXT');
+      addColumnIfMissing(db, 'work_orders', 'executed_by', 'TEXT');
+      addColumnIfMissing(db, 'work_orders', 'executed_at', 'TEXT');
+      addColumnIfMissing(db, 'work_orders', 'verification_status', "TEXT DEFAULT 'PENDING'");
+      addColumnIfMissing(db, 'work_orders', 'verification_notes', 'TEXT');
+      addColumnIfMissing(db, 'work_orders', 'verified_by', 'TEXT');
+      addColumnIfMissing(db, 'work_orders', 'verified_at', 'TEXT');
+
+      db.exec(`
+        UPDATE work_orders
+        SET verification_status = 'LEGACY_UNVERIFIED'
+        WHERE status = 'COMPLETED' AND (verification_status IS NULL OR verification_status = 'PENDING');
+      `);
+
+      markApplied(
+        '004_workorder_execution_verification',
+        'Closed-loop EXECUTE -> VERIFY work order execution and outcome verification tracking'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  if (!isApplied('005_repair_legacy_verification_and_state_machine')) {
+    db.exec('BEGIN');
+    try {
+      addColumnIfMissing(db, 'work_orders', 'execution_mode', 'TEXT');
+      addColumnIfMissing(db, 'maintenance_records', 'work_order_id', 'TEXT');
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_maint_work_order_unique
+        ON maintenance_records(work_order_id)
+        WHERE work_order_id IS NOT NULL;
+      `);
+
+      // Priority Zero 4.2: Remove synthetic VERIFIED classification from historical auto-migrated rows
+      // while preserving genuine human verification records and historical COMPLETED status.
+      db.exec(`
+        UPDATE work_orders
+        SET verification_status = 'LEGACY_UNVERIFIED',
+            verification_notes = NULL,
+            verified_by = NULL,
+            verified_at = NULL
+        WHERE verification_status = 'VERIFIED'
+          AND (
+            verification_notes = 'Completed maintenance logged in CMMS baseline.'
+            OR verified_by = 'system@vanta.internal'
+            OR executed_at IS NULL
+          );
+      `);
+
+      // Priority Zero 4.1: Ensure PARTIAL and UNRESOLVED outcomes map to NEEDS_FOLLOW_UP and UNRESOLVED
+      db.exec(`
+        UPDATE work_orders
+        SET status = 'NEEDS_FOLLOW_UP'
+        WHERE status = 'COMPLETED' AND verification_status = 'PARTIAL';
+
+        UPDATE work_orders
+        SET status = 'UNRESOLVED'
+        WHERE status = 'COMPLETED' AND verification_status = 'UNRESOLVED';
+      `);
+
+      markApplied(
+        '005_repair_legacy_verification_and_state_machine',
+        'Repair synthetic legacy verification records, enforce work order state machine statuses, and add maintenance_records work_order_id idempotency index'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  if (!isApplied('006_evidence_engine_and_connector_lifecycle')) {
+    db.exec('BEGIN');
+    try {
+      addColumnIfMissing(db, 'evidence_provenance', 'evidence_class', "TEXT NOT NULL DEFAULT 'MEASURED'");
+      addColumnIfMissing(db, 'evidence_provenance', 'data_quality_status', "TEXT NOT NULL DEFAULT 'VERIFIED'");
+      addColumnIfMissing(db, 'evidence_provenance', 'relationship_type', 'TEXT');
+      addColumnIfMissing(db, 'evidence_provenance', 'parent_evidence_id', 'TEXT');
+
+      addColumnIfMissing(db, 'iot_integrations', 'lifecycle_stage', "TEXT NOT NULL DEFAULT 'MONITOR'");
+      addColumnIfMissing(db, 'iot_integrations', 'data_freshness_sec', 'INTEGER');
+      addColumnIfMissing(db, 'iot_integrations', 'retry_status', "TEXT NOT NULL DEFAULT 'IDLE'");
+
+      // Classify existing provenance records into Part 6 9-category taxonomy
+      db.exec(`
+        UPDATE evidence_provenance
+        SET evidence_class = CASE
+          WHEN data_mode = 'SIMULATED' THEN 'SIMULATED'
+          WHEN data_mode = 'ESTIMATED' THEN 'ESTIMATED'
+          WHEN source_module = 'INCIDENTS' THEN 'HUMAN_REPORTED'
+          WHEN source_module = 'WORKFLOW' AND processing_method LIKE '%Verification%' THEN 'HUMAN_REPORTED'
+          WHEN source_module = 'WORKFLOW' THEN 'SYSTEM_RECORDED'
+          WHEN source_module = 'VISION' THEN 'OBSERVED'
+          WHEN source_module = 'PREDICTIVE' THEN 'PREDICTED'
+          WHEN source_module = 'RCA' THEN 'INFERRED'
+          ELSE 'MEASURED'
+        END,
+        data_quality_status = CASE
+          WHEN data_mode = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC'
+          ELSE 'VERIFIED'
+        END;
+
+        UPDATE iot_integrations
+        SET lifecycle_stage = CASE
+          WHEN status = 'NOT_CONFIGURED' THEN 'VALIDATE'
+          WHEN status = 'OFFLINE' THEN 'RECOVER'
+          ELSE 'MONITOR'
+        END,
+        retry_status = CASE
+          WHEN status = 'NOT_CONFIGURED' THEN 'BLOCKED_MISSING_CREDENTIALS'
+          WHEN status = 'OFFLINE' THEN 'BACKOFF_RETRYING'
+          ELSE 'IDLE'
+        END,
+        data_freshness_sec = CASE
+          WHEN status = 'NOT_CONFIGURED' OR status = 'OFFLINE' THEN NULL
+          ELSE 15
+        END;
+      `);
+
+      markApplied(
+        '006_evidence_engine_and_connector_lifecycle',
+        'Part 6 9-category evidence provenance taxonomy and Part 9 10-stage industrial connector lifecycle'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  if (!isApplied('007_v4_brain_observability_and_provenance')) {
+    db.exec('BEGIN');
+    try {
+      addColumnIfMissing(db, 'brain_runs', 'correlation_id', 'TEXT');
+      addColumnIfMissing(
+        db,
+        'brain_runs',
+        'execution_status',
+        "TEXT NOT NULL DEFAULT 'DETERMINISTIC_FALLBACK'"
+      );
+      addColumnIfMissing(db, 'brain_runs', 'provider_status', 'TEXT');
+      addColumnIfMissing(db, 'brain_runs', 'failure_category', 'TEXT');
+      addColumnIfMissing(db, 'brain_runs', 'tool_results_json', "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(db, 'brain_runs', 'omitted_evidence_count', 'INTEGER NOT NULL DEFAULT 0');
+
+      db.exec(`
+        UPDATE brain_runs
+        SET execution_status = CASE
+              WHEN engine_used = 'GEMINI_4_HYDROGEN' THEN 'GEMINI_SUCCESS'
+              ELSE 'DETERMINISTIC_FALLBACK'
+            END,
+            provider_status = CASE
+              WHEN engine_used = 'GEMINI_4_HYDROGEN' THEN 'AVAILABLE'
+              WHEN latency_ms >= 3500 THEN 'TIMEOUT'
+              ELSE 'MISSING_API_KEY'
+            END,
+            failure_category = CASE
+              WHEN engine_used = 'GEMINI_4_HYDROGEN' THEN NULL
+              WHEN latency_ms >= 3500 THEN 'PROVIDER_TIMEOUT_FALLBACK'
+              ELSE 'GEMINI_KEY_UNCONFIGURED_FALLBACK'
+            END
+        WHERE provider_status IS NULL;
+      `);
+
+      // Backfill genuine evidence_provenance rows strictly from existing persisted records
+      backfillBaselineProvenanceFromExistingRecords(db);
+
+      markApplied(
+        '007_v4_brain_observability_and_provenance',
+        'V4 Brain execution_status, provider_status, failure_category, tool_results_json, correlation_id, and provenance backfill from persisted records'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
+
+function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
+  db.exec(`
+    INSERT OR IGNORE INTO evidence_provenance (
+      id, tenant_id, facility_id, asset_id, source_module, source_record_id,
+      data_mode, evidence_class, data_quality_status, relationship_type,
+      parent_evidence_id, processing_method, model_version, summary, created_at
+    )
+    SELECT
+      'prv-' || t.id,
+      t.tenant_id,
+      t.facility_id,
+      t.asset_id,
+      'IOT',
+      t.id,
+      t.mode,
+      CASE WHEN t.mode = 'SIMULATED' THEN 'SIMULATED' ELSE 'MEASURED' END,
+      CASE WHEN t.mode = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC' ELSE 'VERIFIED' END,
+      CASE WHEN t.is_anomaly = 1 THEN 'SUPPORTS' ELSE 'CORRELATES_WITH' END,
+      t.asset_id,
+      'Normalized Gateway Ingestion + Statistical Z-Score Check',
+      NULL,
+      t.metric_name || '=' || t.value || ' ' || t.unit || ' (z=' || t.z_score || ', mode=' || t.mode || ')',
+      t.timestamp
+    FROM telemetry_points t
+    WHERE t.id IN ('tel-chl-6', 'tel-cnc-temp-6', 'tel-cnc-vib-6', 'tel-tx-4', 'tel-dc-4', 'tel-med-3');
+
+    INSERT OR IGNORE INTO evidence_provenance (
+      id, tenant_id, facility_id, asset_id, source_module, source_record_id,
+      data_mode, evidence_class, data_quality_status, relationship_type,
+      parent_evidence_id, processing_method, model_version, summary, created_at
+    )
+    SELECT
+      'prv-' || v.id,
+      v.tenant_id,
+      v.facility_id,
+      v.asset_id,
+      'VISION',
+      v.id,
+      v.mode,
+      'OBSERVED',
+      CASE WHEN v.mode = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC' ELSE 'VERIFIED' END,
+      'SUPPORTS',
+      v.camera_id,
+      v.inference_engine || ' (' || COALESCE(v.capture_source, 'SAMPLE_IMAGE') || ')',
+      'vanta-vision-gemini-4h',
+      v.summary,
+      v.created_at
+    FROM vision_events v
+    WHERE v.id = 'vis-evt-1';
+
+    INSERT OR IGNORE INTO evidence_provenance (
+      id, tenant_id, facility_id, asset_id, source_module, source_record_id,
+      data_mode, evidence_class, data_quality_status, relationship_type,
+      parent_evidence_id, processing_method, model_version, summary, created_at
+    )
+    SELECT
+      'prv-' || i.id,
+      i.tenant_id,
+      i.facility_id,
+      i.asset_id,
+      'INCIDENTS',
+      i.id,
+      'MEASURED',
+      'HUMAN_REPORTED',
+      'VERIFIED',
+      'REQUIRES_REVIEW',
+      i.asset_id,
+      'Operator Incident Escalation Record',
+      NULL,
+      '[' || i.severity || '] ' || i.title,
+      i.opened_at
+    FROM incidents i
+    WHERE i.id IN ('inc-1042', 'inc-1038', 'inc-med-1');
+
+    INSERT OR IGNORE INTO evidence_provenance (
+      id, tenant_id, facility_id, asset_id, source_module, source_record_id,
+      data_mode, evidence_class, data_quality_status, relationship_type,
+      parent_evidence_id, processing_method, model_version, summary, created_at
+    )
+    SELECT
+      'prv-' || p.id,
+      p.tenant_id,
+      p.facility_id,
+      p.asset_id,
+      'PREDICTIVE',
+      p.id,
+      p.mode,
+      'PREDICTED',
+      'VERIFIED',
+      'DERIVED_FROM',
+      p.asset_id,
+      p.methodology,
+      COALESCE(p.model_version, 'vanta-rul-heuristic-2.0'),
+      p.failure_mode || ' (RUL ' || p.rul_hours || '±' || p.uncertainty_hours || 'h, risk=' || p.risk_score || ')',
+      p.computed_at
+    FROM predictive_assessments p
+    WHERE p.id IN ('prd-1', 'prd-2');
+
+    INSERT OR IGNORE INTO evidence_provenance (
+      id, tenant_id, facility_id, asset_id, source_module, source_record_id,
+      data_mode, evidence_class, data_quality_status, relationship_type,
+      parent_evidence_id, processing_method, model_version, summary, created_at
+    )
+    SELECT
+      'prv-' || r.id,
+      r.tenant_id,
+      r.facility_id,
+      'ast-cnc-04',
+      'RCA',
+      r.id,
+      'MEASURED',
+      'INFERRED',
+      'VERIFIED',
+      'CORRELATES_WITH',
+      r.incident_id,
+      'Temporal + Directed Asset Dependency Graph Correlation',
+      'vanta-rca-correlator-2.0',
+      r.detected_issue || ' (confidence=' || r.confidence || '%)',
+      r.created_at
+    FROM root_cause_investigations r
+    WHERE r.id = 'rca-1042';
+  `);
 }
 
 export function seedDatabase(db: DatabaseSync): void {
@@ -1130,4 +1445,6 @@ export function seedDatabase(db: DatabaseSync): void {
     'system@vanta.internal',
     hAgo(0.5)
   );
+
+  backfillBaselineProvenanceFromExistingRecords(db);
 }

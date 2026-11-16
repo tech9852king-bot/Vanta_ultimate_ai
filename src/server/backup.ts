@@ -15,6 +15,8 @@ export interface BackupMetadata {
   sha256: string;
   integrityCheck: string;
   createdAt: string;
+  backupType?: string;
+  schemaVersion?: string | null;
 }
 
 function safeResolveBackupDir(baseDir?: string): string {
@@ -47,9 +49,18 @@ export function createDatabaseBackup(
   // Verify snapshot integrity immediately using an independent handle
   const verifyDb = new DatabaseSync(targetPath, { readOnly: true });
   let integrityCheck = 'unknown';
+  let schemaVersion: string | null = null;
   try {
     const row = verifyDb.prepare('PRAGMA integrity_check;').get() as { integrity_check: string } | undefined;
     integrityCheck = row?.integrity_check || 'unknown';
+    try {
+      const migRow = verifyDb
+        .prepare('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1')
+        .get() as { version: string } | undefined;
+      schemaVersion = migRow?.version || null;
+    } catch {
+      schemaVersion = null;
+    }
   } finally {
     verifyDb.close();
   }
@@ -68,6 +79,8 @@ export function createDatabaseBackup(
     sha256,
     integrityCheck,
     createdAt: new Date().toISOString(),
+    backupType: 'VACUUM_INTO',
+    schemaVersion,
   };
 
   fs.writeFileSync(`${targetPath}.sha256.json`, JSON.stringify(meta, null, 2), 'utf8');

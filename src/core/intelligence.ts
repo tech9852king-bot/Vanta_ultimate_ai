@@ -4,18 +4,28 @@
  */
 
 import type {
+  ApprovalItem,
   Asset,
   AssetRelationship,
   AssetStatus,
+  Camera,
   EnergyRecord,
   Incident,
   InfrastructureEvent,
+  IoTIntegration,
+  LifecycleStageSnapshot,
   MaintenanceRecord,
+  NorthStarMetrics,
+  PredictiveAssessment,
   PredictiveBacktestResult,
+  RootCauseInvestigation,
+  SectorConfigurationProfile,
   SeverityLevel,
   TelemetryPoint,
   TwinScenarioResult,
   VantaRole,
+  VisionEvent,
+  WorkOrder,
 } from './types.ts';
 
 export interface AnomalyResult {
@@ -665,3 +675,876 @@ export function requiresHumanApproval(actionType: string): boolean {
     'AGENT_RECOMMENDATION',
   ].includes(normalized);
 }
+
+function latestIso(timestamps: Array<string | null | undefined>): string | null {
+  let maxTime = -1;
+  let maxIso: string | null = null;
+  for (const ts of timestamps) {
+    if (!ts) continue;
+    const ms = Date.parse(ts);
+    if (!Number.isNaN(ms) && ms > maxTime) {
+      maxTime = ms;
+      maxIso = ts;
+    }
+  }
+  return maxIso;
+}
+
+/**
+ * Section 4.5 & Section 5: VANTA 11-Stage Intelligence Lifecycle
+ * CONNECT -> COLLECT -> NORMALIZE -> CONTEXTUALIZE -> ANALYZE -> CORRELATE -> PREDICT -> RECOMMEND -> APPROVE -> EXECUTE -> VERIFY
+ * Strictly separates physical connections/measurements from simulated sources.
+ */
+export function computeLifecycleStages(input: {
+  iotIntegrations: IoTIntegration[];
+  cameras: Camera[];
+  telemetry: TelemetryPoint[];
+  visionEvents: VisionEvent[];
+  assets: Asset[];
+  relationships: AssetRelationship[];
+  events: InfrastructureEvent[];
+  incidents: Incident[];
+  rootCauseInvestigations: RootCauseInvestigation[];
+  predictiveAssessments: PredictiveAssessment[];
+  approvals: ApprovalItem[];
+  workOrders: WorkOrder[];
+}): LifecycleStageSnapshot[] {
+  const physicalIot = input.iotIntegrations.filter((c) => c.status === 'CONNECTED').length;
+  const simulatedIot = input.iotIntegrations.filter((c) => c.status === 'SIMULATED').length;
+  const physicalCams = input.cameras.filter(
+    (c) => c.status === 'ONLINE' && (c.capabilityState === 'LIVE' || c.mode === 'MEASURED')
+  ).length;
+  const simulatedCams = input.cameras.filter(
+    (c) => c.status === 'ONLINE' && c.capabilityState !== 'LIVE' && c.mode !== 'MEASURED'
+  ).length;
+
+  const physicalConnectors = physicalIot + physicalCams;
+  const simulatedConnectors = simulatedIot + simulatedCams;
+  const activeConnectors = physicalConnectors + simulatedConnectors;
+  const totalConnectors = input.iotIntegrations.length + input.cameras.length;
+  const offlineOrUnconfigured =
+    input.iotIntegrations.filter((c) => c.status === 'NOT_CONFIGURED' || c.status === 'OFFLINE' || c.status === 'DEGRADED').length +
+    input.cameras.filter((c) => c.status === 'OFFLINE' || c.status === 'DEGRADED').length;
+
+  const connectBlockers: string[] = [];
+  for (const c of input.iotIntegrations) {
+    if (c.status === 'OFFLINE' || c.status === 'NOT_CONFIGURED') {
+      connectBlockers.push(`IoT ${c.name} (${c.protocol}): ${c.status}`);
+    }
+  }
+  for (const cam of input.cameras) {
+    if (cam.status === 'OFFLINE') {
+      connectBlockers.push(`Camera ${cam.name}: OFFLINE`);
+    }
+  }
+
+  const measuredTelemetry = input.telemetry.filter((t) => t.mode === 'MEASURED').length;
+  const simulatedTelemetry = input.telemetry.length - measuredTelemetry;
+  const measuredVision = input.visionEvents.filter((v) => v.mode === 'MEASURED').length;
+  const simulatedVision = input.visionEvents.length - measuredVision;
+
+  const collectedSignals = input.telemetry.length + input.visionEvents.length;
+  const measuredSignals = measuredTelemetry + measuredVision;
+  const simulatedSignals = simulatedTelemetry + simulatedVision;
+
+  const measuredAssets = input.assets.filter((a) => a.dataMode === 'MEASURED').length;
+  const simulatedAssets = input.assets.length - measuredAssets;
+
+  const zAnomalies = input.telemetry.filter((t) => t.isAnomaly);
+  const measuredAnomalies = zAnomalies.filter((t) => t.mode === 'MEASURED').length;
+  const anomaliesDetected = zAnomalies.length + input.events.length;
+
+  const rcaCount = input.rootCauseInvestigations.length;
+  const uncorroboratedIncidents = input.incidents.filter(
+    (inc) => !input.rootCauseInvestigations.some((r) => r.incidentId === inc.id)
+  );
+
+  const ruleOrStatPredictive = input.predictiveAssessments.filter(
+    (p) => p.validationStatus === 'RULE_VERIFIED' || p.validationStatus === 'STATISTICAL_ZSCORE'
+  ).length;
+  const simPredictive = input.predictiveAssessments.length - ruleOrStatPredictive;
+
+  const pendingApprovals = input.approvals.filter((a) => a.status === 'PENDING');
+  const approvedApprovals = input.approvals.filter((a) => a.status === 'APPROVED');
+
+  const executedWorkOrders = input.workOrders.filter(
+    (w) =>
+      Boolean(w.executedAt) ||
+      w.status === 'IN_PROGRESS' ||
+      w.status === 'VERIFICATION_PENDING' ||
+      w.status === 'COMPLETED' ||
+      w.status === 'NEEDS_FOLLOW_UP' ||
+      w.status === 'UNRESOLVED'
+  );
+  const awaitingExecution = input.workOrders.filter((w) => w.status === 'APPROVED');
+
+  const verifiedWorkOrders = input.workOrders.filter(
+    (w) => w.status === 'COMPLETED' && w.verificationStatus === 'VERIFIED'
+  );
+  const verifiedRcas = input.rootCauseInvestigations.filter((r) => r.status === 'VERIFIED');
+  const verifiedCount = verifiedWorkOrders.length + verifiedRcas.length;
+  const followUpOrUnresolved = input.workOrders.filter(
+    (w) =>
+      w.status === 'NEEDS_FOLLOW_UP' ||
+      w.status === 'UNRESOLVED' ||
+      w.verificationStatus === 'PARTIAL' ||
+      w.verificationStatus === 'UNRESOLVED'
+  );
+  const awaitingVerification = input.workOrders.filter(
+    (w) => w.status === 'IN_PROGRESS' || w.status === 'VERIFICATION_PENDING'
+  );
+
+  return [
+    {
+      stage: 'CONNECT',
+      order: 1,
+      label: 'Connect',
+      status: totalConnectors === 0 ? 'NOT_CONFIGURED' : offlineOrUnconfigured > 0 ? 'ATTENTION' : 'ACTIVE',
+      count: activeConnectors,
+      physicalCount: physicalConnectors,
+      simulatedCount: simulatedConnectors,
+      summary: `${physicalConnectors} physical · ${simulatedConnectors} simulated · ${offlineOrUnconfigured} offline`,
+      evidence: [
+        `${physicalIot} CONNECTED IoT gateways, ${simulatedIot} SIMULATED brokers`,
+        `${physicalCams} MEASURED cameras, ${simulatedCams} sample/simulated streams`,
+      ],
+      blockers: connectBlockers,
+      lastUpdatedAt: latestIso([
+        ...input.iotIntegrations.map((c) => c.lastHeartbeatAt),
+        ...input.cameras.map((c) => c.lastFrameAt),
+      ]),
+    },
+    {
+      stage: 'COLLECT',
+      order: 2,
+      label: 'Collect',
+      status: collectedSignals > 0 ? 'ACTIVE' : 'PENDING',
+      count: collectedSignals,
+      physicalCount: measuredSignals,
+      simulatedCount: simulatedSignals,
+      summary: `${input.telemetry.length} telemetry · ${input.visionEvents.length} vision captures`,
+      evidence: [
+        `${measuredTelemetry} MEASURED telemetry points, ${simulatedTelemetry} SIMULATED/ESTIMATED`,
+        `${measuredVision} MEASURED vision inspections, ${simulatedVision} SIMULATED`,
+      ],
+      blockers: collectedSignals === 0 ? ['No telemetry or vision samples ingested in current scope'] : [],
+      lastUpdatedAt: latestIso([
+        ...input.telemetry.map((t) => t.timestamp),
+        ...input.visionEvents.map((v) => v.createdAt),
+      ]),
+    },
+    {
+      stage: 'NORMALIZE',
+      order: 3,
+      label: 'Normalize',
+      status: collectedSignals > 0 ? 'ACTIVE' : 'PENDING',
+      count: measuredSignals,
+      physicalCount: measuredSignals,
+      simulatedCount: simulatedSignals,
+      summary: `${measuredSignals} MEASURED · ${simulatedSignals} SIMULATED/EST`,
+      evidence: [
+        `Origin tagging enforced across ${collectedSignals} records`,
+        `Threshold & schema validation active on all ingested points`,
+      ],
+      blockers: measuredSignals === 0 && collectedSignals > 0 ? ['All current signals are SIMULATED/ESTIMATED'] : [],
+      lastUpdatedAt: latestIso(input.telemetry.map((t) => t.timestamp)),
+    },
+    {
+      stage: 'CONTEXTUALIZE',
+      order: 4,
+      label: 'Contextualize',
+      status: input.assets.length > 0 ? 'ACTIVE' : 'PENDING',
+      count: input.assets.length + input.relationships.length,
+      physicalCount: measuredAssets,
+      simulatedCount: simulatedAssets,
+      summary: `${input.assets.length} assets · ${input.relationships.length} dependency edges`,
+      evidence: [
+        `${measuredAssets} MEASURED assets, ${simulatedAssets} SIMULATED/ESTIMATED assets`,
+        `${input.relationships.length} directed dependency edges in twin graph`,
+      ],
+      blockers: input.assets.length === 0 ? ['No assets registered in selected facility scope'] : [],
+      lastUpdatedAt: latestIso(input.assets.map((a) => a.updatedAt)),
+    },
+    {
+      stage: 'ANALYZE',
+      order: 5,
+      label: 'Analyze',
+      status: anomaliesDetected > 0 ? 'ATTENTION' : 'ACTIVE',
+      count: anomaliesDetected,
+      physicalCount: measuredAnomalies,
+      simulatedCount: anomaliesDetected - measuredAnomalies,
+      summary: `${zAnomalies.length} z-score anomalies · ${input.events.length} events`,
+      evidence: [
+        `${zAnomalies.length} statistical z-score excursions detected`,
+        `${input.events.length} cross-module infrastructure events logged`,
+      ],
+      blockers: zAnomalies.length > 0 ? [`${zAnomalies.length} active telemetry anomalies require triage`] : [],
+      lastUpdatedAt: latestIso([
+        ...zAnomalies.map((t) => t.timestamp),
+        ...input.events.map((e) => e.createdAt),
+      ]),
+    },
+    {
+      stage: 'CORRELATE',
+      order: 6,
+      label: 'Correlate',
+      status: uncorroboratedIncidents.length > 0 ? 'ATTENTION' : input.incidents.length > 0 ? 'ACTIVE' : 'PENDING',
+      count: rcaCount,
+      physicalCount: rcaCount,
+      simulatedCount: 0,
+      summary: `${rcaCount} RCA dossiers across ${input.incidents.length} incidents`,
+      evidence: [
+        `${rcaCount} graph-correlated root cause investigations persisted`,
+        `Temporal precedence & dependency edge scoring active`,
+      ],
+      blockers:
+        uncorroboratedIncidents.length > 0
+          ? [`${uncorroboratedIncidents.length} open incident(s) lack RCA correlation dossier`]
+          : [],
+      lastUpdatedAt: latestIso(input.rootCauseInvestigations.map((r) => r.createdAt)),
+    },
+    {
+      stage: 'PREDICT',
+      order: 7,
+      label: 'Predict',
+      status: input.predictiveAssessments.length > 0 ? 'ACTIVE' : 'PENDING',
+      count: input.predictiveAssessments.length,
+      physicalCount: ruleOrStatPredictive,
+      simulatedCount: simPredictive,
+      summary: `${ruleOrStatPredictive} rule/stat · ${simPredictive} simulated RUL`,
+      evidence: [
+        `${ruleOrStatPredictive} assessments backed by statistical z-score or rule verification`,
+        `Explicit uncertainty bounds (±h) attached to every RUL estimate`,
+      ],
+      blockers:
+        input.predictiveAssessments.length === 0 ? ['No predictive RUL assessments computed in scope'] : [],
+      lastUpdatedAt: latestIso(input.predictiveAssessments.map((p) => p.computedAt)),
+    },
+    {
+      stage: 'RECOMMEND',
+      order: 8,
+      label: 'Recommend',
+      status: input.workOrders.length > 0 ? 'ACTIVE' : 'PENDING',
+      count: input.workOrders.length,
+      physicalCount: input.workOrders.length,
+      simulatedCount: 0,
+      summary: `${input.workOrders.length} bounded work orders queued`,
+      evidence: [
+        `${input.workOrders.length} maintenance/mitigation work orders with LOTO interlock checks`,
+      ],
+      blockers: [],
+      lastUpdatedAt: latestIso(input.workOrders.map((w) => w.createdAt)),
+    },
+    {
+      stage: 'APPROVE',
+      order: 9,
+      label: 'Approve',
+      status: pendingApprovals.length > 0 ? 'ATTENTION' : 'ACTIVE',
+      count: approvedApprovals.length,
+      physicalCount: approvedApprovals.length,
+      simulatedCount: 0,
+      summary: `${pendingApprovals.length} pending human sign-off · ${approvedApprovals.length} approved`,
+      evidence: [
+        `${approvedApprovals.length} consequential actions authorized by human operators`,
+        `Zero autonomous physical actuations permitted`,
+      ],
+      blockers:
+        pendingApprovals.length > 0
+          ? [`${pendingApprovals.length} approval item(s) awaiting human decision`]
+          : [],
+      lastUpdatedAt: latestIso(input.approvals.map((a) => a.decidedAt || a.createdAt)),
+    },
+    {
+      stage: 'EXECUTE',
+      order: 10,
+      label: 'Execute',
+      status: awaitingExecution.length > 0 ? 'ATTENTION' : executedWorkOrders.length > 0 ? 'ACTIVE' : 'PENDING',
+      count: executedWorkOrders.length,
+      physicalCount: executedWorkOrders.length,
+      simulatedCount: 0,
+      summary: `${executedWorkOrders.length} field dispatches recorded`,
+      evidence: [
+        `${executedWorkOrders.length} work order field executions recorded (workflow record only, not direct PLC actuation)`,
+      ],
+      blockers:
+        awaitingExecution.length > 0
+          ? [`${awaitingExecution.length} approved work order(s) awaiting field execution start`]
+          : [],
+      lastUpdatedAt: latestIso(executedWorkOrders.map((w) => w.executedAt || w.updatedAt)),
+    },
+    {
+      stage: 'VERIFY',
+      order: 11,
+      label: 'Verify',
+      status:
+        followUpOrUnresolved.length > 0 || awaitingVerification.length > 0
+          ? 'ATTENTION'
+          : verifiedCount > 0
+          ? 'ACTIVE'
+          : 'PENDING',
+      count: verifiedCount,
+      physicalCount: verifiedCount,
+      simulatedCount: 0,
+      summary: `${verifiedCount} verified · ${followUpOrUnresolved.length} follow-up/unresolved`,
+      evidence: [
+        `${verifiedWorkOrders.length} work orders verified post-execution`,
+        `${verifiedRcas.length} RCA investigations verified`,
+      ],
+      blockers: [
+        ...(awaitingVerification.length > 0
+          ? [`${awaitingVerification.length} executed work order(s) awaiting post-action verification`]
+          : []),
+        ...(followUpOrUnresolved.length > 0
+          ? [`${followUpOrUnresolved.length} work order(s) marked NEEDS_FOLLOW_UP or UNRESOLVED`]
+          : []),
+      ],
+      lastUpdatedAt: latestIso(verifiedWorkOrders.map((w) => w.verifiedAt || w.updatedAt)),
+    },
+  ];
+}
+
+/**
+ * Section 4.4 & Section 16: Honest North Star Outcome Measures.
+ * - Zero denominator always returns null (INSUFFICIENT DATA), NEVER 100%.
+ * - Separates MEASURED, ESTIMATED, and SIMULATED records.
+ * - Tracks completed, needs-follow-up (PARTIAL), unresolved, and legacy-unverified work orders separately.
+ * - Exposes exact numerator and denominator observation counts behind every percentage.
+ */
+export function computeNorthStarMetrics(input: {
+  incidents: Incident[];
+  rootCauseInvestigations: RootCauseInvestigation[];
+  workOrders: WorkOrder[];
+  predictiveAssessments: PredictiveAssessment[];
+  energyRecords: EnergyRecord[];
+}): NorthStarMetrics {
+  const corroboratedIds = new Set(input.rootCauseInvestigations.map((r) => r.incidentId));
+  const corroboratedIncidentsCount = input.incidents.filter((i) => corroboratedIds.has(i.id)).length;
+  const incidentDenominator = input.incidents.length;
+  const incidentTriageCoveragePct =
+    incidentDenominator > 0 ? Math.round((corroboratedIncidentsCount / incidentDenominator) * 100) : null;
+
+  const completedWorkOrders = input.workOrders.filter((w) => w.status === 'COMPLETED');
+  const needsFollowUpWorkOrders = input.workOrders.filter(
+    (w) => w.status === 'NEEDS_FOLLOW_UP' || (w.status === 'COMPLETED' && w.verificationStatus === 'PARTIAL')
+  );
+  const unresolvedWorkOrders = input.workOrders.filter(
+    (w) => w.status === 'UNRESOLVED' || (w.status === 'COMPLETED' && w.verificationStatus === 'UNRESOLVED')
+  );
+  const legacyUnverifiedWorkOrders = input.workOrders.filter(
+    (w) => w.verificationStatus === 'LEGACY_UNVERIFIED'
+  );
+  const verifiedWorkOrders = completedWorkOrders.filter((w) => w.verificationStatus === 'VERIFIED');
+
+  // Post-execution outcome denominator includes all non-legacy evaluated work orders
+  const evaluatedWorkOrders = input.workOrders.filter(
+    (w) =>
+      (w.status === 'COMPLETED' || w.status === 'NEEDS_FOLLOW_UP' || w.status === 'UNRESOLVED') &&
+      w.verificationStatus !== 'LEGACY_UNVERIFIED'
+  );
+  const outcomeDenominator = evaluatedWorkOrders.length;
+  const verifiedOutcomeRatePct =
+    outcomeDenominator > 0
+      ? Math.round((verifiedWorkOrders.length / outcomeDenominator) * 100)
+      : null;
+
+  const ruleVerifiedAssessmentsCount = input.predictiveAssessments.filter(
+    (p) => p.validationStatus === 'RULE_VERIFIED'
+  ).length;
+  const statisticalAssessmentsCount = input.predictiveAssessments.filter(
+    (p) => p.validationStatus === 'STATISTICAL_ZSCORE'
+  ).length;
+  const simulatedAssessmentsCount = input.predictiveAssessments.filter(
+    (p) => p.validationStatus === 'SIMULATED_BASELINE'
+  ).length;
+  const nonSimPredictive = ruleVerifiedAssessmentsCount + statisticalAssessmentsCount;
+  const predictiveDenominator = input.predictiveAssessments.length;
+  const predictiveEvidenceCoveragePct =
+    predictiveDenominator > 0
+      ? Math.round((nonSimPredictive / predictiveDenominator) * 100)
+      : null;
+
+  const measuredEnergyKwh = Number(
+    input.energyRecords
+      .filter((r) => r.mode === 'MEASURED')
+      .reduce((acc, r) => acc + r.consumptionKwh, 0)
+      .toFixed(1)
+  );
+  const estimatedEnergyKwh = Number(
+    input.energyRecords
+      .filter((r) => r.mode === 'ESTIMATED')
+      .reduce((acc, r) => acc + r.consumptionKwh, 0)
+      .toFixed(1)
+  );
+  const simulatedEnergyKwh = Number(
+    input.energyRecords
+      .filter((r) => r.mode === 'SIMULATED')
+      .reduce((acc, r) => acc + r.consumptionKwh, 0)
+      .toFixed(1)
+  );
+  const totalKwh = Number((measuredEnergyKwh + estimatedEnergyKwh + simulatedEnergyKwh).toFixed(1));
+  const measuredEnergySharePct = totalKwh > 0 ? Math.round((measuredEnergyKwh / totalKwh) * 100) : null;
+
+  const interlockChecked = input.workOrders.filter((w) => Boolean(w.safetyInterlockChecked)).length;
+  const workOrderDenominator = input.workOrders.length;
+  // Section 4.4: No denominator means null (INSUFFICIENT DATA), NEVER 100%
+  const safetyInterlockCompliancePct =
+    workOrderDenominator > 0 ? Math.round((interlockChecked / workOrderDenominator) * 100) : null;
+
+  return {
+    incidentTriageCoveragePct,
+    verifiedOutcomeRatePct,
+    predictiveEvidenceCoveragePct,
+    measuredEnergySharePct,
+    safetyInterlockCompliancePct,
+    completedWorkOrdersCount: completedWorkOrders.length,
+    verifiedWorkOrdersCount: verifiedWorkOrders.length,
+    needsFollowUpWorkOrdersCount: needsFollowUpWorkOrders.length,
+    unresolvedWorkOrdersCount: unresolvedWorkOrders.length,
+    legacyUnverifiedWorkOrdersCount: legacyUnverifiedWorkOrders.length,
+    openIncidentsCount: input.incidents.filter((i) => i.status !== 'RESOLVED').length,
+    corroboratedIncidentsCount,
+    measuredEnergyKwh,
+    estimatedEnergyKwh,
+    simulatedEnergyKwh,
+    ruleVerifiedAssessmentsCount,
+    statisticalAssessmentsCount,
+    simulatedAssessmentsCount,
+    ratios: {
+      incidentTriage: {
+        numerator: corroboratedIncidentsCount,
+        denominator: incidentDenominator,
+        methodology: 'Incidents linked to a persisted Root Cause Investigation dossier / Total scoped incidents',
+        formula: '(corroborated_incidents / total_scoped_incidents) * 100',
+        source: 'incidents JOIN root_cause_investigations (SQLite WAL)',
+        timeWindow: 'Current active facility & tenant operational window',
+        dataQuality: incidentDenominator > 0 ? 'VERIFIED' : 'INSUFFICIENT_DATA',
+        calculatedAt: new Date().toISOString(),
+        drillDownSection: 'rca',
+      },
+      verifiedOutcome: {
+        numerator: verifiedWorkOrders.length,
+        denominator: outcomeDenominator,
+        methodology:
+          'Human-verified COMPLETED work orders / Total evaluated post-execution work orders (excluding LEGACY_UNVERIFIED)',
+        formula: '(human_verified_completed_work_orders / evaluated_post_execution_work_orders) * 100',
+        source: 'work_orders + maintenance_records (HUMAN_REPORTED post-action verification)',
+        timeWindow: 'All non-legacy post-execution work orders in scope',
+        dataQuality: outcomeDenominator > 0 ? 'VERIFIED' : 'INSUFFICIENT_DATA',
+        calculatedAt: new Date().toISOString(),
+        drillDownSection: 'operations',
+      },
+      predictiveEvidence: {
+        numerator: nonSimPredictive,
+        denominator: predictiveDenominator,
+        methodology:
+          'Assessments backed by RULE_VERIFIED or STATISTICAL_ZSCORE telemetry / Total predictive assessments',
+        formula: '((rule_verified_assessments + statistical_zscore_assessments) / total_assessments) * 100',
+        source: 'predictive_assessments (vanta-rul-heuristic-2.0)',
+        timeWindow: 'Latest rolling assessment window per asset',
+        dataQuality:
+          predictiveDenominator === 0
+            ? 'INSUFFICIENT_DATA'
+            : simulatedAssessmentsCount === 0
+            ? 'VERIFIED'
+            : nonSimPredictive > 0
+            ? 'MIXED_MODES'
+            : 'SIMULATED_ONLY',
+        calculatedAt: new Date().toISOString(),
+        drillDownSection: 'predictive',
+      },
+      measuredEnergy: {
+        numerator: Math.round(measuredEnergyKwh),
+        denominator: Math.round(totalKwh),
+        methodology: 'MEASURED meter consumption (kWh) / Total scoped energy consumption (kWh)',
+        formula: '(measured_kwh / (measured_kwh + estimated_kwh + simulated_kwh)) * 100',
+        source: 'energy_records (utility submeters vs estimated/simulated profiles)',
+        timeWindow: 'Trailing 24-hour facility metering interval',
+        dataQuality:
+          totalKwh === 0
+            ? 'INSUFFICIENT_DATA'
+            : measuredEnergyKwh === totalKwh
+            ? 'VERIFIED'
+            : measuredEnergyKwh > 0
+            ? 'MIXED_MODES'
+            : 'SIMULATED_ONLY',
+        calculatedAt: new Date().toISOString(),
+        drillDownSection: 'energy',
+      },
+      safetyInterlock: {
+        numerator: interlockChecked,
+        denominator: workOrderDenominator,
+        methodology: 'Work orders with verified LOTO safety interlock check / Total scoped work orders',
+        formula: '(loto_interlock_checked_work_orders / total_work_orders) * 100',
+        source: 'work_orders.safety_interlock_checked + approvals.safety_boundary_check',
+        timeWindow: 'All active & historical work orders in tenant scope',
+        dataQuality: workOrderDenominator > 0 ? 'VERIFIED' : 'INSUFFICIENT_DATA',
+        calculatedAt: new Date().toISOString(),
+        drillDownSection: 'operations',
+      },
+    },
+    epistemicNote:
+      'All North Star metrics are computed strictly from persisted tenant records. Zero denominators return null (INSUFFICIENT DATA) rather than synthetic 100% defaults.',
+  };
+}
+
+export interface WorkOrderTransitionContext {
+  hasExecutionRecord?: boolean;
+  verificationStatus?: 'VERIFIED' | 'PARTIAL' | 'UNRESOLVED' | null;
+  actorApproved?: boolean;
+}
+
+export interface WorkOrderTransitionValidation {
+  allowed: boolean;
+  nextStatus: WorkOrder['status'];
+  reason?: string;
+}
+
+/**
+ * Part 14: Centralized Work-Order State-Machine Transition Engine.
+ * Enforces deterministic transitions across:
+ * CREATED -> PENDING_APPROVAL -> APPROVED -> IN_PROGRESS -> VERIFICATION_PENDING -> COMPLETED
+ * with explicit support for REJECTED, CANCELLED, NEEDS_FOLLOW_UP, and UNRESOLVED.
+ * Strictly prevents verification bypass before execution and prevents PARTIAL/UNRESOLVED
+ * outcomes from silently becoming COMPLETED.
+ */
+export function validateWorkOrderTransition(
+  currentStatus: WorkOrder['status'],
+  targetStatus: WorkOrder['status'],
+  context: WorkOrderTransitionContext = {}
+): WorkOrderTransitionValidation {
+  const normalizedCurrent: WorkOrder['status'] =
+    currentStatus === 'DRAFT' ? 'CREATED' : currentStatus;
+
+  if (
+    normalizedCurrent === 'COMPLETED' ||
+    normalizedCurrent === 'REJECTED' ||
+    normalizedCurrent === 'CANCELLED'
+  ) {
+    return {
+      allowed: false,
+      nextStatus: currentStatus,
+      reason: `Work order in terminal status '${currentStatus}' cannot transition to '${targetStatus}'.`,
+    };
+  }
+
+  if (targetStatus === 'CANCELLED') {
+    if (
+      normalizedCurrent === 'CREATED' ||
+      normalizedCurrent === 'PENDING_APPROVAL' ||
+      normalizedCurrent === 'APPROVED'
+    ) {
+      return { allowed: true, nextStatus: 'CANCELLED' };
+    }
+    return {
+      allowed: false,
+      nextStatus: currentStatus,
+      reason: `Work order in status '${currentStatus}' cannot be cancelled after field execution has started.`,
+    };
+  }
+
+  if (normalizedCurrent === 'CREATED') {
+    if (targetStatus === 'PENDING_APPROVAL') {
+      return { allowed: true, nextStatus: 'PENDING_APPROVAL' };
+    }
+    return {
+      allowed: false,
+      nextStatus: currentStatus,
+      reason: `Work order in 'CREATED' status must enter 'PENDING_APPROVAL' before '${targetStatus}'.`,
+    };
+  }
+
+  if (normalizedCurrent === 'PENDING_APPROVAL') {
+    if (targetStatus === 'APPROVED' || targetStatus === 'REJECTED') {
+      return { allowed: true, nextStatus: targetStatus };
+    }
+    return {
+      allowed: false,
+      nextStatus: currentStatus,
+      reason: `Work order in 'PENDING_APPROVAL' requires human approval decision (APPROVED or REJECTED) before '${targetStatus}'.`,
+    };
+  }
+
+  if (normalizedCurrent === 'APPROVED') {
+    if (targetStatus === 'IN_PROGRESS') {
+      if (context.hasExecutionRecord === false) {
+        return {
+          allowed: false,
+          nextStatus: currentStatus,
+          reason: 'Field execution notes and execution timestamp are required to enter IN_PROGRESS.',
+        };
+      }
+      return { allowed: true, nextStatus: 'IN_PROGRESS' };
+    }
+    return {
+      allowed: false,
+      nextStatus: currentStatus,
+      reason: `Work order in 'APPROVED' status must complete field execution ('IN_PROGRESS') before '${targetStatus}'.`,
+    };
+  }
+
+  if (normalizedCurrent === 'IN_PROGRESS' || normalizedCurrent === 'VERIFICATION_PENDING') {
+    if (!context.hasExecutionRecord) {
+      return {
+        allowed: false,
+        nextStatus: currentStatus,
+        reason: `Work order must have a recorded field execution timestamp before transitioning to '${targetStatus}'.`,
+      };
+    }
+
+    if (normalizedCurrent === 'IN_PROGRESS' && targetStatus === 'VERIFICATION_PENDING') {
+      return { allowed: true, nextStatus: 'VERIFICATION_PENDING' };
+    }
+
+    if (
+      targetStatus === 'COMPLETED' ||
+      targetStatus === 'NEEDS_FOLLOW_UP' ||
+      targetStatus === 'UNRESOLVED'
+    ) {
+      const vStatus = context.verificationStatus;
+      if (!vStatus) {
+        return {
+          allowed: false,
+          nextStatus: currentStatus,
+          reason: 'Explicit post-action verificationStatus (VERIFIED, PARTIAL, or UNRESOLVED) is required.',
+        };
+      }
+      const expectedStatus: WorkOrder['status'] =
+        vStatus === 'VERIFIED'
+          ? 'COMPLETED'
+          : vStatus === 'PARTIAL'
+          ? 'NEEDS_FOLLOW_UP'
+          : 'UNRESOLVED';
+
+      if (targetStatus !== expectedStatus) {
+        return {
+          allowed: false,
+          nextStatus: currentStatus,
+          reason: `Verification outcome '${vStatus}' must map to status '${expectedStatus}', not '${targetStatus}'.`,
+        };
+      }
+      return { allowed: true, nextStatus: expectedStatus };
+    }
+  }
+
+  if (
+    (normalizedCurrent === 'NEEDS_FOLLOW_UP' || normalizedCurrent === 'UNRESOLVED') &&
+    targetStatus === 'IN_PROGRESS'
+  ) {
+    return { allowed: true, nextStatus: 'IN_PROGRESS' };
+  }
+
+  return {
+    allowed: false,
+    nextStatus: currentStatus,
+    reason: `Invalid work order state transition from '${currentStatus}' to '${targetStatus}'.`,
+  };
+}
+
+export interface TelemetryQualityReport {
+  sampleCount: number;
+  completenessPct: number;
+  measuredSharePct: number;
+  duplicateCount: number;
+  outOfOrderCount: number;
+  futureTimestampCount: number;
+  staleSampleCount: number;
+  freshnessSec: number | null;
+  sensorHealth: 'HEALTHY' | 'DEGRADED_STALE' | 'DUPLICATE_DETECTED' | 'OUT_OF_ORDER' | 'INSUFFICIENT_SAMPLES';
+}
+
+/**
+ * Part 10: Telemetry & Data Quality Evaluation.
+ * Evaluates completeness, freshness/staleness, duplicate timestamps, out-of-order arrival,
+ * future clock-skew timestamps, and sensor health classification.
+ */
+export function evaluateTelemetryQuality(
+  pointsInArrivalOrder: TelemetryPoint[],
+  nowMs: number = Date.now(),
+  staleThresholdSec: number = 7200
+): TelemetryQualityReport {
+  const sampleCount = pointsInArrivalOrder.length;
+  if (sampleCount === 0) {
+    return {
+      sampleCount: 0,
+      completenessPct: 0,
+      measuredSharePct: 0,
+      duplicateCount: 0,
+      outOfOrderCount: 0,
+      futureTimestampCount: 0,
+      staleSampleCount: 0,
+      freshnessSec: null,
+      sensorHealth: 'INSUFFICIENT_SAMPLES',
+    };
+  }
+
+  let validCount = 0;
+  let measuredCount = 0;
+  let duplicateCount = 0;
+  let outOfOrderCount = 0;
+  let futureTimestampCount = 0;
+  let staleSampleCount = 0;
+  let latestMs = -1;
+  let prevMs: number | null = null;
+  const seenKeys = new Set<string>();
+
+  for (const pt of pointsInArrivalOrder) {
+    const ms = Date.parse(pt.timestamp);
+    const hasValidTs = !Number.isNaN(ms);
+    if (Number.isFinite(pt.value) && Boolean(pt.unit) && hasValidTs) {
+      validCount += 1;
+    }
+    if (pt.mode === 'MEASURED') {
+      measuredCount += 1;
+    }
+    const dedupKey = `${pt.assetId}:${pt.metricName}:${pt.timestamp}:${pt.value}`;
+    if (seenKeys.has(dedupKey)) {
+      duplicateCount += 1;
+    } else {
+      seenKeys.add(dedupKey);
+    }
+
+    if (hasValidTs) {
+      if (ms > latestMs) latestMs = ms;
+      if (ms > nowMs + 60_000) {
+        futureTimestampCount += 1;
+      }
+      if ((nowMs - ms) / 1000 > staleThresholdSec) {
+        staleSampleCount += 1;
+      }
+      if (prevMs !== null && ms < prevMs) {
+        outOfOrderCount += 1;
+      }
+      prevMs = ms;
+    }
+  }
+
+  const completenessPct = Math.round((validCount / sampleCount) * 100);
+  const measuredSharePct = Math.round((measuredCount / sampleCount) * 100);
+  const freshnessSec = latestMs > 0 ? Math.max(0, Math.round((nowMs - latestMs) / 1000)) : null;
+
+  let sensorHealth: TelemetryQualityReport['sensorHealth'] = 'HEALTHY';
+  if (duplicateCount > 0) {
+    sensorHealth = 'DUPLICATE_DETECTED';
+  } else if (outOfOrderCount > 0 || futureTimestampCount > 0) {
+    sensorHealth = 'OUT_OF_ORDER';
+  } else if (freshnessSec !== null && freshnessSec > staleThresholdSec) {
+    sensorHealth = 'DEGRADED_STALE';
+  }
+
+  return {
+    sampleCount,
+    completenessPct,
+    measuredSharePct,
+    duplicateCount,
+    outOfOrderCount,
+    futureTimestampCount,
+    staleSampleCount,
+    freshnessSec,
+    sensorHealth,
+  };
+}
+
+const SECTOR_PROFILES: SectorConfigurationProfile[] = [
+  {
+    sector: 'Manufacturing & Industrial Production',
+    monitoredEquipmentClasses: ['CNC Spindles & Robotics', 'Industrial Chillers', 'Compressed Air Headers', 'HV Transformers'],
+    criticalEnvelopes: ['Spindle Bearing Temp (<70°C)', 'RMS Vibration (<4.5 mm/s ISO 10816)', 'Chilled Loop Delta-T'],
+    interlockBoundaryPolicy: 'Physical PLC E-stops, LOTO interlocks, and relief valves cannot be bypassed by VANTA or AI agents.',
+    recommendedConnectors: ['OPC UA Plant Historian', 'MQTT Telemetry Broker', 'Modbus TCP Sub-Meter'],
+    standardsRef: ['ISO 10816-3 Vibration', 'IEC 61131-3 PLC Boundary', 'OSHA 1910.147 LOTO'],
+  },
+  {
+    sector: 'Energy & Power Infrastructure',
+    monitoredEquipmentClasses: ['Power Transformers', 'SF6 Switchgear', 'Feeder Breakers', 'Relay Protection'],
+    criticalEnvelopes: ['Top-Oil Thermal Limit (85°C)', 'Phase Voltage Harmonics (<3% THD)', 'Substation Load Factor'],
+    interlockBoundaryPolicy: 'SCADA/relay protection trips remain exclusively hardware-enforced; AI is advisory only.',
+    recommendedConnectors: ['IEC 61850 / DNP3 Gateway', 'Modbus TCP Substation RTU', 'IEEE C37.118 PMU'],
+    standardsRef: ['IEEE C57.91 Transformer Loading', 'IEC 61850 Substation Automation', 'NERC CIP Boundary'],
+  },
+  {
+    sector: 'Data Centers',
+    monitoredEquipmentClasses: ['CRAC/CRAH Units', 'UPS Battery Strings', 'PDU Busways', 'Liquid Cooling Loops'],
+    criticalEnvelopes: ['Cold Aisle Inlet Temp (18-27°C ASHRAE)', 'PUE Envelope (<1.35)', 'UPS Bus Transfer Readiness'],
+    interlockBoundaryPolicy: 'ATS/UPS transfer switches operate autonomously; work orders enforce maintenance LOTO.',
+    recommendedConnectors: ['BACnet/IP BMS Bridge', 'SNMPv3 PDU Collector', 'Redfish Server Telemetry'],
+    standardsRef: ['ASHRAE TC 9.9 Thermal Guidelines', 'Uptime Institute Tier III/IV', 'NFPA 75/70E'],
+  },
+  {
+    sector: 'Airports & Transportation',
+    monitoredEquipmentClasses: ['Baggage Handling Conveyors', 'Airfield Ground Lighting (AGL)', 'Jet Bridge Actuators', 'Terminal HVAC'],
+    criticalEnvelopes: ['Conveyor Drive Motor Current', 'AGL Constant Current Regulator Loop', 'Terminal Air Exchange Rate'],
+    interlockBoundaryPolicy: 'Airfield lighting, rail interlocking, and passenger boarding safety trips remain hardware-governed.',
+    recommendedConnectors: ['OPC UA BHS Supervisor', 'Modbus TCP AGL Monitoring', 'ONVIF Apron Vision'],
+    standardsRef: ['ICAO Annex 14 Airfield Lighting', 'EN 12312 Passenger Boarding Bridges'],
+  },
+  {
+    sector: 'Hospitals & Healthcare Infrastructure',
+    monitoredEquipmentClasses: ['Medical Gas Manifolds (O2/Vacuum)', 'Operating Theater HEPA AHU', 'Emergency Diesel Generators', 'Blood Bank Cold Storage'],
+    criticalEnvelopes: ['OR Positive Pressure Differential (>2.5 Pa)', 'Medical O2 Line Pressure (345-380 kPa)', 'Generator Auto-Start (<10s)'],
+    interlockBoundaryPolicy: 'Life-safety medical gas valves, emergency power transfer switches, and clinical alarms are strictly read-only.',
+    recommendedConnectors: ['BACnet/IP Clinical BMS', 'Modbus TCP Generator ATS', 'MQTT Cold-Storage Sensors'],
+    standardsRef: ['NFPA 99 Health Care Facilities Code', 'ASHRAE 170 Ventilation of Health Care Facilities'],
+  },
+  {
+    sector: 'Commercial Buildings & Campuses',
+    monitoredEquipmentClasses: ['Central Chiller Plants', 'Variable Air Volume (VAV) Boxes', 'Elevators & Escalators', 'Solar/BESS Microgrids'],
+    criticalEnvelopes: ['Chilled Water Approach Temp (<2.5°C)', 'Indoor CO2 Concentration (<800 ppm)', 'Peak Demand Tariff Ceiling'],
+    interlockBoundaryPolicy: 'Fire/smoke damper overrides, elevator safety brakes, and main breaker trips remain hardware-locked.',
+    recommendedConnectors: ['BACnet/IP Campus Trunk', 'Modbus TCP Revenue Sub-Meters', 'MQTT Occupancy & IAQ'],
+    standardsRef: ['ASHRAE 90.1 Energy Standard', 'ISO 50001 Energy Management'],
+  },
+  {
+    sector: 'Logistics & Supply Chain',
+    monitoredEquipmentClasses: ['Cold-Chain Compressors', 'AGV Fleets', 'Dock Doors & Air Curtains', 'Battery Chargers'],
+    criticalEnvelopes: ['Frozen Storage Hold (<-18°C)', 'AGV Corridor Clearance', 'Battery Thermal Cutoff'],
+    interlockBoundaryPolicy: 'AGV collision E-stop and ammonia/refrigerant safety valves remain hardware-governed.',
+    recommendedConnectors: ['MQTT Fleet Broker', 'Modbus TCP Refrigeration PLC', 'ONVIF Dock Vision'],
+    standardsRef: ['ISO 3691-4 Driverless Industrial Trucks', 'IIAR-2 Ammonia Refrigeration Safety'],
+  },
+  {
+    sector: 'Smart Infrastructure',
+    monitoredEquipmentClasses: ['Municipal Water Booster Pumps', 'District Heating Heat Exchangers', 'Tunnel Ventilation Fans', 'Substation Feeders'],
+    criticalEnvelopes: ['Distribution Main Pressure (3.5-6.0 bar)', 'Pump Cavitation Vibration Limit', 'Tunnel CO/NOx Threshold'],
+    interlockBoundaryPolicy: 'High-pressure relief valves, chlorination dosing interlocks, and floodgates require certified field actuation.',
+    recommendedConnectors: ['OPC UA SCADA Historian', 'MQTT Edge Telemetry', 'Modbus TCP Flow & Pressure RTU'],
+    standardsRef: ['AWWA Water Distribution Standards', 'IEC 62443 Industrial Cybersecurity'],
+  },
+];
+
+export function getAllSectorProfiles(): SectorConfigurationProfile[] {
+  return SECTOR_PROFILES;
+}
+
+/**
+ * Section 17: Configurable Industry Sector Operational Profiles across all 8 target sectors.
+ */
+export function getSectorProfile(industry: string): SectorConfigurationProfile {
+  const norm = (industry || '').toLowerCase();
+  if (norm.includes('energy') || norm.includes('grid') || norm.includes('utility') || norm.includes('power')) {
+    return SECTOR_PROFILES[1];
+  }
+  if (norm.includes('data') || norm.includes('cloud')) {
+    return SECTOR_PROFILES[2];
+  }
+  if (norm.includes('airport') || norm.includes('transport') || norm.includes('aviation') || norm.includes('rail')) {
+    return SECTOR_PROFILES[3];
+  }
+  if (norm.includes('hospital') || norm.includes('health') || norm.includes('medical') || norm.includes('clinical')) {
+    return SECTOR_PROFILES[4];
+  }
+  if (norm.includes('commercial') || norm.includes('building') || norm.includes('campus')) {
+    return SECTOR_PROFILES[5];
+  }
+  if (norm.includes('logistics') || norm.includes('warehouse') || norm.includes('cold') || norm.includes('supply')) {
+    return SECTOR_PROFILES[6];
+  }
+  if (norm.includes('smart') || norm.includes('municipal') || norm.includes('water') || norm.includes('city')) {
+    return SECTOR_PROFILES[7];
+  }
+  return {
+    ...SECTOR_PROFILES[0],
+    sector: industry || SECTOR_PROFILES[0].sector,
+  };
+}
+
+

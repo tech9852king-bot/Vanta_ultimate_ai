@@ -48,6 +48,45 @@ export type VantaRole =
 
 export type DataOriginMode = 'MEASURED' | 'ESTIMATED' | 'SIMULATED';
 
+/**
+ * Part 6: VANTA Evidence Intelligence Engine — 9 canonical evidence classifications.
+ * Human reports and system records are never collapsed into sensor measurements.
+ */
+export type EvidenceClassification =
+  | 'MEASURED'
+  | 'OBSERVED'
+  | 'HUMAN_REPORTED'
+  | 'SYSTEM_RECORDED'
+  | 'ESTIMATED'
+  | 'INFERRED'
+  | 'PREDICTED'
+  | 'SIMULATED'
+  | 'UNKNOWN';
+
+/**
+ * Part 6: Evidence graph relationship types.
+ */
+export type EvidenceRelationType =
+  | 'SUPPORTS'
+  | 'CONTRADICTS'
+  | 'DERIVED_FROM'
+  | 'CORRELATES_WITH'
+  | 'VERIFIES'
+  | 'SUPERSEDES'
+  | 'REQUIRES_REVIEW';
+
+export type ConnectorLifecycleStage =
+  | 'REGISTER'
+  | 'CONFIGURE'
+  | 'VALIDATE'
+  | 'AUTHENTICATE'
+  | 'CONNECT'
+  | 'COLLECT'
+  | 'NORMALIZE'
+  | 'MONITOR'
+  | 'RECOVER'
+  | 'DISCONNECT';
+
 export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
 export type AssetStatus = 'NOMINAL' | 'WARNING' | 'CRITICAL' | 'MAINTENANCE' | 'OFFLINE';
@@ -256,14 +295,17 @@ export interface IoTIntegration {
   tenantId: string;
   facilityId: string;
   name: string;
-  protocol: 'MQTT' | 'OPC_UA' | 'MODBUS_TCP' | 'REST_API' | 'WEBSOCKET';
+  protocol: 'MQTT' | 'OPC_UA' | 'MODBUS_TCP' | 'REST_API' | 'WEBSOCKET' | 'BACNET_IP' | 'SNMP';
   endpoint: string;
   status: 'CONNECTED' | 'SIMULATED' | 'DEGRADED' | 'NOT_CONFIGURED' | 'OFFLINE';
   capabilityState: CapabilityState;
+  lifecycleStage?: ConnectorLifecycleStage;
   pollingIntervalMs: number;
   deviceCount: number;
   latencyMs?: number | null;
   consecutiveFailures?: number;
+  dataFreshnessSec?: number | null;
+  retryStatus?: 'IDLE' | 'BACKOFF_RETRY' | 'RECOVERED' | 'HALTED';
   lastError?: string | null;
   credentialRef?: string | null;
   lastHeartbeatAt: string;
@@ -288,10 +330,18 @@ export interface TelemetryPoint {
 export interface EvidenceProvenanceRecord {
   id: string;
   sourceModule: string;
+  sourceRecordId?: string;
   assetId: string | null;
   facilityId: string | null;
   timestamp: string;
+  ingestionTimestamp?: string;
+  observationWindow?: string | null;
+  unit?: string | null;
   dataMode: DataOriginMode;
+  evidenceClass?: EvidenceClassification;
+  dataQualityStatus?: 'VERIFIED' | 'VALIDATED' | 'UNVERIFIED' | 'STALE' | 'DEGRADED';
+  relationshipType?: EvidenceRelationType | null;
+  parentEvidenceId?: string | null;
   processingMethod: string;
   modelVersion: string | null;
   summary: string;
@@ -347,12 +397,110 @@ export interface WorkOrder {
   title: string;
   description: string;
   priority: SeverityLevel;
-  status: 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'IN_PROGRESS' | 'COMPLETED' | 'REJECTED';
+  status:
+    | 'CREATED'
+    | 'DRAFT'
+    | 'PENDING_APPROVAL'
+    | 'APPROVED'
+    | 'IN_PROGRESS'
+    | 'VERIFICATION_PENDING'
+    | 'COMPLETED'
+    | 'NEEDS_FOLLOW_UP'
+    | 'UNRESOLVED'
+    | 'REJECTED'
+    | 'CANCELLED';
   requestedBy: string;
   approvedBy: string | null;
   safetyInterlockChecked: boolean;
+  executionNotes?: string | null;
+  executedBy?: string | null;
+  executedAt?: string | null;
+  executionMode?: 'FIELD_DISPATCH_RECORDED' | null;
+  verificationStatus?: 'PENDING' | 'VERIFIED' | 'PARTIAL' | 'UNRESOLVED' | 'LEGACY_UNVERIFIED' | null;
+  verificationNotes?: string | null;
+  verifiedBy?: string | null;
+  verifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LifecycleStageSnapshot {
+  stage:
+    | 'CONNECT'
+    | 'COLLECT'
+    | 'NORMALIZE'
+    | 'CONTEXTUALIZE'
+    | 'ANALYZE'
+    | 'CORRELATE'
+    | 'PREDICT'
+    | 'RECOMMEND'
+    | 'APPROVE'
+    | 'EXECUTE'
+    | 'VERIFY';
+  order: number;
+  label: string;
+  status: 'ACTIVE' | 'ATTENTION' | 'PENDING' | 'NOT_CONFIGURED';
+  count: number;
+  physicalCount: number;
+  simulatedCount: number;
+  summary: string;
+  evidence: string[];
+  blockers: string[];
+  lastUpdatedAt: string | null;
+}
+
+export interface MetricObservationRatio {
+  numerator: number;
+  denominator: number;
+  methodology: string;
+  formula: string;
+  source: string;
+  timeWindow: string;
+  dataQuality: 'VERIFIED' | 'MIXED_MODES' | 'SIMULATED_ONLY' | 'INSUFFICIENT_DATA' | 'MEASURED' | 'MIXED' | 'SIMULATED';
+  calculatedAt: string;
+  drillDownSection: string;
+}
+
+export interface NorthStarMetrics {
+  incidentTriageCoveragePct: number | null;
+  verifiedOutcomeRatePct: number | null;
+  predictiveEvidenceCoveragePct: number | null;
+  measuredEnergySharePct: number | null;
+  safetyInterlockCompliancePct: number | null;
+  connectorReliabilityPct?: number | null;
+  telemetryQualityScore?: number | null;
+  assetDataCoveragePct?: number | null;
+  evidenceCompletenessPct?: number | null;
+  completedWorkOrdersCount: number;
+  verifiedWorkOrdersCount: number;
+  needsFollowUpWorkOrdersCount: number;
+  unresolvedWorkOrdersCount: number;
+  legacyUnverifiedWorkOrdersCount: number;
+  openIncidentsCount: number;
+  corroboratedIncidentsCount: number;
+  measuredEnergyKwh: number;
+  estimatedEnergyKwh: number;
+  simulatedEnergyKwh: number;
+  ruleVerifiedAssessmentsCount: number;
+  statisticalAssessmentsCount: number;
+  simulatedAssessmentsCount: number;
+  ratios: {
+    incidentTriage: MetricObservationRatio;
+    verifiedOutcome: MetricObservationRatio;
+    predictiveEvidence: MetricObservationRatio;
+    measuredEnergy: MetricObservationRatio;
+    safetyInterlock: MetricObservationRatio;
+  };
+  epistemicNote: string;
+}
+
+export interface SectorConfigurationProfile {
+  sector: string;
+  monitoredEquipmentClasses: string[];
+  criticalEnvelopes: string[];
+  interlockBoundaryPolicy: string;
+  recommendedConnectors: string[];
+  standardsRef?: string[];
 }
 
 export interface EnergyRecord {
@@ -507,20 +655,107 @@ export interface KnowledgeDocument {
   updatedAt: string;
 }
 
+export type BrainExecutionStatus =
+  | 'GEMINI_SUCCESS'
+  | 'DETERMINISTIC_FALLBACK'
+  | 'DEGRADED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'NOT_CONFIGURED';
+
+export type BrainProviderStatus =
+  | 'AVAILABLE'
+  | 'NOT_CONFIGURED'
+  | 'MISSING_API_KEY'
+  | 'AUTH_ERROR'
+  | 'PERMISSION_ERROR'
+  | 'PERMISSION_DENIED'
+  | 'INVALID_MODEL'
+  | 'RATE_LIMITED'
+  | 'TIMEOUT'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'UNAVAILABLE'
+  | 'MALFORMED_OUTPUT'
+  | 'ABORTED'
+  | 'PROMPT_BLOCKED';
+
+export interface BrainToolExecutionResult {
+  toolName: string;
+  status: 'COMPLETED' | 'FAILED' | 'DENIED';
+  recordCount: number;
+  recordsRetrieved?: number;
+  durationMs: number;
+  error?: string;
+}
+
+export interface BrainRunRecord {
+  id: string;
+  tenantId: string;
+  facilityIds: string[];
+  actorEmail: string;
+  query: string;
+  intent: string;
+  engineUsed: 'GEMINI_4_HYDROGEN' | 'DETERMINISTIC_CORE_FALLBACK';
+  modelId: string;
+  executionStatus: BrainExecutionStatus;
+  providerStatus: BrainProviderStatus | null;
+  failureCategory: string | null;
+  correlationId: string | null;
+  toolsCalled: string[];
+  toolResults: BrainToolExecutionResult[];
+  verifiedFactsCount: number;
+  rejectedCitationsCount: number;
+  omittedEvidenceCount: number;
+  retryCount?: number;
+  latencyMs: number;
+  createdAt: string;
+}
+
+export interface GeminiProviderVerificationStep {
+  step: number;
+  name: string;
+  status: 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
+  durationMs: number;
+  detail: string;
+}
+
+export interface GeminiProviderVerificationReport {
+  overallStatus: 'VERIFIED_LIVE' | 'DEGRADED_FALLBACK' | 'BLOCKED_NO_CREDENTIALS' | 'FAILED_CONFIG';
+  geminiConfigured: boolean;
+  modelId: string;
+  modelValid: boolean;
+  timeoutMs: number;
+  steps: GeminiProviderVerificationStep[];
+  sampleBrainRunId?: string | null;
+  totalDurationMs: number;
+  verifiedAt: string;
+}
+
 export interface BrainAnalysisResponse {
+  executionId?: string;
+  correlationId?: string;
   query: string;
   intent?: string;
+  situationSummary?: string;
   verifiedFacts: Array<{
     claim: string;
     sourceId: string;
     module: string;
     dataMode?: DataOriginMode;
+    evidenceClass?: EvidenceClassification;
     facilityId?: string | null;
   }>;
   rejectedCitations?: Array<{ claim: string; sourceId: string; reason: string }>;
   observations: string[];
+  anomalies?: string[];
+  candidateCauses?: string[];
+  supportingEvidence?: string[];
+  contradictoryEvidence?: string[];
   assumptionsAndHypotheses: string[];
   predictions?: string[];
+  confidence?: number;
+  confidenceLabel?: 'HIGH_EVIDENCE_CORROBORATION' | 'MODERATE_EVIDENCE_CORROBORATION' | 'LIMITED_EVIDENCE';
+  confidenceMethodology?: string;
   unknowns?: string[];
   recommendations: Array<{
     action: string;
@@ -528,8 +763,21 @@ export interface BrainAnalysisResponse {
     requiresHumanApproval: boolean;
     rationale: string;
   }>;
+  investigationStages?: Array<{
+    stage: number;
+    name: string;
+    status: 'COMPLETED' | 'SKIPPED' | 'DEGRADED' | 'FAILED';
+    detail: string;
+  }>;
   toolsCalled: string[];
+  toolResults?: BrainToolExecutionResult[];
+  omittedEvidenceCount?: number;
+  retryCount?: number;
+  dataFreshnessSummary?: string;
   engineUsed: 'GEMINI_4_HYDROGEN' | 'DETERMINISTIC_CORE_FALLBACK';
+  executionStatus?: BrainExecutionStatus;
+  providerStatus?: BrainProviderStatus;
+  failureCategory?: string | null;
   modelId?: string;
   latencyMs?: number;
   uncertaintyNote: string;

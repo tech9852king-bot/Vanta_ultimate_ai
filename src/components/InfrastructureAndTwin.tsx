@@ -10,68 +10,111 @@ export function InfrastructureView({ data }: { data: WorkspaceData }) {
     <div className="space-y-6">
       <ModuleHeader
         title="Infrastructure Hierarchy"
-        subtitle="Multi-site, facility, building, and operational zone topology across authorized facilities."
+        subtitle="8-tier connected topology: Organization → Site → Facility → Building → Zone → Asset → Equipment → Sensor."
         capability="FUNCTIONAL"
         dataMode="MEASURED"
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {data.facilities.map((fac) => {
-          const facZones = data.zones.filter((z) => z.facilityId === fac.id);
-          const facAssets = data.assets.filter((a) => a.facilityId === fac.id);
-          return (
-            <div key={fac.id} className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
-              <div className="flex items-start justify-between gap-3 border-b border-[#1E293B] pb-3">
-                <div>
-                  <div className="text-xs font-mono text-slate-400">
-                    {fac.code} · {fac.sector}
-                  </div>
-                  <h2 className="text-base font-semibold text-slate-100 mt-0.5">{fac.name}</h2>
-                </div>
-                <StatusText value={fac.status} />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 text-xs font-mono">
-                <div>
-                  <span className="text-slate-400 block">Coordinates</span>
-                  <span className="text-slate-200">{fac.coordinates}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Floor Area</span>
-                  <span className="text-slate-200 tabular-nums">{fac.areaSqm.toLocaleString()} m²</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Assets</span>
-                  <span className="text-slate-200 tabular-nums">{facAssets.length}</span>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-[#1E293B]">
-                <div className="text-xs font-medium text-slate-300">Building Zones ({facZones.length})</div>
-                {facZones.length === 0 ? (
-                  <p className="text-xs text-slate-500">No zones defined.</p>
-                ) : (
-                  <div className="divide-y divide-[#1E293B]">
-                    {facZones.map((z) => (
-                      <div key={z.id} className="py-2 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="text-slate-200 font-medium">{z.zoneName}</span>
-                          <span className="text-slate-400 ml-2">
-                            {z.buildingName} · {z.floor}
-                          </span>
-                        </div>
-                        <span className="font-mono text-slate-400">
-                          {z.zoneType} {z.restricted ? '· RESTRICTED' : ''}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+        <div className="text-slate-300">
+          ORG: <span className="text-white font-semibold">{data.organization?.name}</span> · {data.organization?.industry}
+        </div>
+        <div className="text-slate-400">
+          {data.sites.length} Sites · {data.facilities.length} Facilities · {data.zones.length} Zones · {data.assets.length} Assets/Sensors
+        </div>
       </div>
+
+      {data.sites.map((site) => {
+        const siteFacilities = data.facilities.filter((f) => f.siteId === site.id);
+        if (siteFacilities.length === 0) return null;
+        return (
+          <section key={site.id} className="space-y-4">
+            <div className="flex items-center justify-between border-b border-[#1E293B] pb-2 text-xs font-mono">
+              <span className="text-sky-400 font-semibold">
+                SITE · {site.name} ({site.country})
+              </span>
+              <span className="text-slate-400">TZ: {site.timezone}</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {siteFacilities.map((fac) => {
+                const facZones = data.zones.filter((z) => z.facilityId === fac.id);
+                const facAssets = data.assets.filter((a) => a.facilityId === fac.id);
+                return (
+                  <div key={fac.id} className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-4">
+                    <div className="flex items-start justify-between gap-3 border-b border-[#1E293B] pb-3">
+                      <div>
+                        <div className="text-xs font-mono text-slate-400">
+                          {fac.code} · {fac.sector}
+                        </div>
+                        <h2 className="text-base font-semibold text-slate-100 mt-0.5">{fac.name}</h2>
+                      </div>
+                      <StatusText value={fac.status} />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 text-xs font-mono">
+                      <div>
+                        <span className="text-slate-400 block">Coordinates</span>
+                        <span className="text-slate-200">{fac.coordinates}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Floor Area</span>
+                        <span className="text-slate-200 tabular-nums">{fac.areaSqm.toLocaleString()} m²</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Assets & Sensors</span>
+                        <span className="text-slate-200 tabular-nums">{facAssets.length}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5 pt-2 border-t border-[#1E293B]">
+                      <div className="text-xs font-medium text-slate-300">
+                        Buildings, Zones & Mounted Equipment ({facZones.length})
+                      </div>
+                      {facZones.length === 0 ? (
+                        <p className="text-xs text-slate-500">No zones defined.</p>
+                      ) : (
+                        <div className="divide-y divide-[#1E293B]">
+                          {facZones.map((z) => {
+                            const zoneAssets = facAssets.filter((a) => a.zoneId === z.id);
+                            return (
+                              <div key={z.id} className="py-2.5 space-y-1.5 text-xs">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div>
+                                    <span className="text-slate-200 font-medium">{z.zoneName}</span>
+                                    <span className="text-slate-400 ml-2">
+                                      {z.buildingName} · {z.floor}
+                                    </span>
+                                  </div>
+                                  <span className="font-mono text-slate-400">
+                                    {z.zoneType} {z.restricted ? '· RESTRICTED' : ''}
+                                  </span>
+                                </div>
+                                {zoneAssets.length > 0 && (
+                                  <div className="pl-3 border-l border-[#243044] space-y-1">
+                                    {zoneAssets.map((a) => (
+                                      <div key={a.id} className="flex items-center justify-between text-[11px] font-mono">
+                                        <span className="text-slate-300">
+                                          {a.assetType === 'SENSOR' ? '└ Sensor:' : '•'} {a.code} — {a.name}
+                                        </span>
+                                        <StatusText value={a.status} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -84,6 +127,9 @@ export function AssetIntelligenceView({
   onRefresh: () => void;
 }) {
   const [search, setSearch] = useState('');
+  const [selectedAssetId, setSelectedAssetId] = useState(
+    data.assets.find((a) => a.status === 'CRITICAL')?.id || data.assets[0]?.id || ''
+  );
   const [showCreate, setShowCreate] = useState(false);
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
@@ -109,6 +155,32 @@ export function AssetIntelligenceView({
       a.code.toLowerCase().includes(search.toLowerCase()) ||
       a.assetType.toLowerCase().includes(search.toLowerCase())
   );
+
+  const inspectedAsset = data.assets.find((a) => a.id === selectedAssetId) || filtered[0] || data.assets[0];
+  const inspectedFacility = data.facilities.find((f) => f.id === inspectedAsset?.facilityId);
+  const inspectedSite = data.sites.find((s) => s.id === inspectedFacility?.siteId);
+  const inspectedZone = data.zones.find((z) => z.id === inspectedAsset?.zoneId);
+  const inspectedTelemetry = data.telemetry
+    .filter((t) => inspectedAsset && t.assetId === inspectedAsset.id)
+    .slice(0, 10)
+    .reverse();
+  const inspectedEdges = data.relationships.filter(
+    (r) => inspectedAsset && (r.sourceAssetId === inspectedAsset.id || r.targetAssetId === inspectedAsset.id)
+  );
+  const inspectedIncidents = data.incidents.filter((i) => inspectedAsset && i.assetId === inspectedAsset.id);
+  const inspectedMaintenance = data.maintenanceRecords.filter((m) => inspectedAsset && m.assetId === inspectedAsset.id);
+  const inspectedWorkOrders = data.workOrders.filter((w) => inspectedAsset && w.assetId === inspectedAsset.id);
+  const inspectedCameras = data.cameras.filter(
+    (c) => inspectedAsset && (c.assetId === inspectedAsset.id || c.zoneId === inspectedAsset.zoneId)
+  );
+  const inspectedEnergy = data.energyRecords.filter(
+    (e) => inspectedAsset && (e.assetId === inspectedAsset.id || e.facilityId === inspectedAsset.facilityId)
+  );
+  const inspectedProvenance = (data.provenanceRecords || []).filter(
+    (p) => inspectedAsset && p.assetId === inspectedAsset.id
+  );
+  const inspectedPredictive = data.predictiveAssessments.find((p) => inspectedAsset && p.assetId === inspectedAsset.id);
+  const childSensors = data.assets.filter((a) => inspectedAsset && a.parentAssetId === inspectedAsset.id);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,8 +213,8 @@ export function AssetIntelligenceView({
   return (
     <div className="space-y-6">
       <ModuleHeader
-        title="Asset Intelligence & Graph Registry"
-        subtitle="Unified physical asset catalog linking ownership, manufacturer specs, health scores, dependency edges, and telemetry channels."
+        title="Asset Intelligence & Unified Asset 360°"
+        subtitle="Unified physical asset catalog connecting hierarchy location, OEM identity, telemetry history, dependencies, cameras, maintenance, work orders, energy, and provenance."
         capability="FUNCTIONAL"
         dataMode="MIXED"
         actions={
@@ -222,7 +294,7 @@ export function AssetIntelligenceView({
           placeholder="Filter by code, name, or type..."
           className="w-full max-w-md px-3.5 py-2 rounded-md bg-[#111827] border border-[#1E293B] text-xs text-slate-100"
         />
-        <span className="text-xs font-mono text-slate-400 tabular-nums">{filtered.length} assets</span>
+        <span className="text-xs font-mono text-slate-400 tabular-nums">{filtered.length} assets · click row for Asset 360°</span>
       </div>
 
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
@@ -239,20 +311,172 @@ export function AssetIntelligenceView({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1E293B] text-xs">
-            {filtered.map((a) => (
-              <tr key={a.id} className="hover:bg-[#161E2E]/60">
-                <td className="py-3 px-4 font-mono text-slate-300">{a.code}</td>
-                <td className="py-3 px-4 font-medium text-slate-100">{a.name}</td>
-                <td className="py-3 px-4 font-mono text-slate-400">{a.assetType}</td>
-                <td className="py-3 px-4 text-slate-400">{a.manufacturer} {a.model}</td>
-                <td className="py-3 px-4"><StatusText value={a.status} /></td>
-                <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-200">{a.healthScore}%</td>
-                <td className="py-3 px-4"><StatusText value={a.dataMode} /></td>
-              </tr>
-            ))}
+            {filtered.map((a) => {
+              const isSelected = inspectedAsset?.id === a.id;
+              return (
+                <tr
+                  key={a.id}
+                  onClick={() => setSelectedAssetId(a.id)}
+                  className={`cursor-pointer transition-colors ${isSelected ? 'bg-sky-950/35' : 'hover:bg-[#161E2E]/60'}`}
+                >
+                  <td className="py-3 px-4 font-mono text-sky-300">{a.code}</td>
+                  <td className="py-3 px-4 font-medium text-slate-100">{a.name}</td>
+                  <td className="py-3 px-4 font-mono text-slate-400">{a.assetType}</td>
+                  <td className="py-3 px-4 text-slate-400">{a.manufacturer} {a.model}</td>
+                  <td className="py-3 px-4"><StatusText value={a.status} /></td>
+                  <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-200">{a.healthScore}%</td>
+                  <td className="py-3 px-4"><StatusText value={a.dataMode} /></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+      {/* Unified Asset 360° Intelligence Inspector (Section 6.2) */}
+      {inspectedAsset && (
+        <section className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-5" data-testid="asset-360-inspector">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#1E293B] pb-4">
+            <div className="space-y-1">
+              <div className="text-[11px] font-mono text-sky-400">
+                ASSET 360° · {data.organization?.name} → {inspectedSite?.name || 'Site'} → {inspectedFacility?.code || inspectedAsset.facilityId} → {inspectedZone?.buildingName || 'Building'} → {inspectedZone?.zoneName || inspectedAsset.zoneId}
+              </div>
+              <h2 className="text-lg font-semibold text-white">
+                {inspectedAsset.code} — {inspectedAsset.name}
+              </h2>
+              <div className="text-xs text-slate-400 font-mono">
+                {inspectedAsset.manufacturer} {inspectedAsset.model} · Owner: {inspectedAsset.owner} · {inspectedAsset.dataMode} · Twin Pos ({inspectedAsset.xPos}, {inspectedAsset.yPos})
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-right font-mono">
+                <div className="text-[11px] text-slate-400">Evidence Health Index</div>
+                <div className="text-lg font-semibold text-white tabular-nums">{inspectedAsset.healthScore}%</div>
+              </div>
+              <StatusText value={inspectedAsset.status} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-6 space-y-3">
+              <div className="text-xs font-medium text-slate-300">
+                Telemetry Envelope ({inspectedTelemetry[0]?.metricName || 'No active channel samples'})
+              </div>
+              <TelemetryChart
+                values={inspectedTelemetry.map((t) => ({
+                  label: new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  value: t.value,
+                  isAnomaly: t.isAnomaly,
+                }))}
+                unit={inspectedTelemetry[0]?.unit || ''}
+                warnThreshold={inspectedTelemetry[0]?.thresholdWarn}
+                critThreshold={inspectedTelemetry[0]?.thresholdCrit}
+                height={140}
+              />
+              {inspectedPredictive && (
+                <div className="p-3 rounded-md bg-[#0B0F17] border border-[#1E293B] text-xs space-y-1">
+                  <div className="flex items-center justify-between font-mono">
+                    <span className="text-amber-300">Predictive RUL: {inspectedPredictive.rulHours}h ±{inspectedPredictive.uncertaintyHours}h</span>
+                    <span className="text-slate-400">Risk {inspectedPredictive.riskScore}/100 ({inspectedPredictive.validationStatus})</span>
+                  </div>
+                  <div className="text-slate-300">{inspectedPredictive.recommendedAction}</div>
+                </div>
+              )}
+            </div>
+
+            <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-2">
+                <div className="font-medium text-slate-200">Dependencies & Sensors ({inspectedEdges.length + childSensors.length})</div>
+                {inspectedEdges.length === 0 && childSensors.length === 0 ? (
+                  <p className="text-slate-500">No direct dependency edges logged.</p>
+                ) : (
+                  <ul className="space-y-1 font-mono text-[11px]">
+                    {inspectedEdges.map((edge) => {
+                      const otherId = edge.sourceAssetId === inspectedAsset.id ? edge.targetAssetId : edge.sourceAssetId;
+                      const other = data.assets.find((x) => x.id === otherId);
+                      const dir = edge.sourceAssetId === inspectedAsset.id ? '→' : '←';
+                      return (
+                        <li key={edge.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAssetId(otherId)}
+                            className="text-sky-400 hover:underline text-left"
+                          >
+                            {dir} [{edge.relationshipType}] {other?.code || otherId}
+                          </button>
+                        </li>
+                      );
+                    })}
+                    {childSensors.map((s) => (
+                      <li key={s.id} className="text-slate-300">
+                        • Child Sensor: {s.code} ({s.status})
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-2">
+                <div className="font-medium text-slate-200">
+                  Incidents ({inspectedIncidents.length}) & Maintenance ({inspectedMaintenance.length})
+                </div>
+                {inspectedIncidents.map((inc) => (
+                  <div key={inc.id} className="pb-1.5 border-b border-[#1E293B] last:border-b-0">
+                    <div className="font-mono text-[11px] text-amber-300">{inc.status} · {inc.severity}</div>
+                    <div className="text-slate-200">{inc.title}</div>
+                  </div>
+                ))}
+                {inspectedMaintenance.slice(0, 3).map((m) => (
+                  <div key={m.id} className="text-[11px] text-slate-400">
+                    <span className="font-mono text-emerald-400">{m.maintenanceType}</span>: {m.summary}
+                  </div>
+                ))}
+                {inspectedIncidents.length === 0 && inspectedMaintenance.length === 0 && (
+                  <p className="text-slate-500">No historical incidents or maintenance logs.</p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-2">
+                <div className="font-medium text-slate-200">
+                  Work Orders ({inspectedWorkOrders.length}) & Cameras ({inspectedCameras.length})
+                </div>
+                {inspectedWorkOrders.slice(0, 2).map((w) => (
+                  <div key={w.id} className="text-[11px] text-slate-300 font-mono">
+                    • {w.id} [{w.status}] — {w.title}
+                  </div>
+                ))}
+                {inspectedCameras.map((c) => (
+                  <div key={c.id} className="text-[11px] text-sky-300 font-mono">
+                    • Cam: {c.name} ({c.status} · {c.capabilityState || c.mode})
+                  </div>
+                ))}
+                {inspectedWorkOrders.length === 0 && inspectedCameras.length === 0 && (
+                  <p className="text-slate-500">No active work orders or zone cameras linked.</p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-2">
+                <div className="font-medium text-slate-200">
+                  Energy ({inspectedEnergy.length}) & Provenance ({inspectedProvenance.length})
+                </div>
+                {inspectedEnergy.slice(0, 2).map((e) => (
+                  <div key={e.id} className="text-[11px] font-mono text-slate-300">
+                    • {e.consumptionKwh.toLocaleString()} kWh ({e.mode}) · Peak {e.peakDemandKw} kW
+                  </div>
+                ))}
+                {inspectedProvenance.slice(0, 2).map((p) => (
+                  <div key={p.id} className="text-[11px] text-slate-400 truncate" title={p.summary}>
+                    • [{p.sourceModule}/{p.dataMode}] {p.summary}
+                  </div>
+                ))}
+                {inspectedEnergy.length === 0 && inspectedProvenance.length === 0 && (
+                  <p className="text-slate-500">No direct energy meters or provenance entries.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

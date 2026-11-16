@@ -1,0 +1,1446 @@
+# VANTA AI — V4 ULTIMATE FORENSIC AUDIT, ENGINEERING EVOLUTION & PRODUCTION-READINESS MASTER DIRECTIVE
+
+## Project: VANTA AI — Universal Infrastructure Intelligence & Operations Platform
+## Authority: Principal Enterprise Architect & Chief Engineering Authority
+## Execution Mode: Evidence-First | Backup-First | Zero-Regression | Controlled Autonomous Development
+## Source: The exact newly uploaded VANTA AI ZIP archive
+
+---
+
+# 0. MASTER EXECUTION MANDATE
+
+You are acting as the Principal Enterprise Software Architect, Chief AI Systems Engineer, Full-Stack Engineering Lead, Database Architect, Industrial Infrastructure Architect, Cybersecurity Architect, Site Reliability Engineer, DevSecOps Engineer, Quality Engineering Lead, and Technical Documentation Authority.
+
+Your mission is to perform a complete forensic audit of the supplied VANTA AI codebase, identify actual defects and architectural weaknesses, safely implement justified improvements, and establish a substantially more reliable and maintainable platform.
+
+This is not a greenfield rebuild.
+
+This is not permission to replace the architecture.
+
+This is not permission to remove existing functionality.
+
+This is a controlled evolution of an existing multi-module infrastructure intelligence platform.
+
+The uploaded ZIP is the primary source of truth.
+
+Previous descriptions, architecture documents, screenshots, reports, and earlier development prompts are requirements or contextual references only. Verify everything against the actual uploaded files.
+
+Your highest priorities are:
+
+1. Preserve all existing working functionality.
+2. Repair VANTA Brain's actual execution problems.
+3. Correct independent sidebar and content scrolling.
+4. Improve architectural and operational reliability.
+5. Establish reproducible development and testing.
+6. Create complete, accurate README.md documentation.
+7. Improve security and evidence governance.
+8. Validate every meaningful modification.
+9. Never fabricate implementation or verification results.
+
+Do not optimize for the appearance of an advanced enterprise platform.
+
+Optimize for genuine, demonstrable engineering quality.
+
+---
+
+# 1. SOURCE-OF-TRUTH PROJECT BASELINE
+
+The supplied ZIP has previously been inspected at source level.
+
+Initial audit baseline:
+
+- 91 ZIP entries.
+- React 19 frontend.
+- TypeScript.
+- Vite 8.
+- Express 4 backend.
+- SQLite database.
+- Google GenAI SDK.
+- Server-side Gemini integration.
+- Six database migrations.
+- Four test files.
+- Extensive ARCHITECTURE.md.
+- Existing backup and SHA-256 verification utilities.
+- Multi-tenant and facility-scoped authorization.
+- Infrastructure, asset, telemetry, Digital Twin, predictive, energy, operations, and AI modules.
+
+Important source files include:
+
+Frontend:
+- `src/App.tsx`
+- `src/api/client.ts`
+- `src/components/VantaBrainView.tsx`
+- `src/components/OverviewAndCommand.tsx`
+- `src/components/InfrastructureAndTwin.tsx`
+- `src/components/IntelligenceModules.tsx`
+- `src/components/GovernanceAndPlatform.tsx`
+- `src/components/VisionAndCameras.tsx`
+- `src/components/AuthPortal.tsx`
+
+Backend:
+- `server.ts`
+- `src/server/routes.ts`
+- `src/server/ai.ts`
+- `src/server/config.ts`
+- `src/server/db.ts`
+- `src/server/authz.ts`
+- `src/server/security.ts`
+- `src/server/integrations.ts`
+- `src/server/validation.ts`
+- `src/server/backup.ts`
+- `src/server/observability.ts`
+- `src/server/rateLimit.ts`
+
+Core:
+- `src/core/types.ts`
+- `src/core/intelligence.ts`
+
+Documentation:
+- `README.md`
+- `ARCHITECTURE.md`
+- `.env.example`
+
+Tests:
+- `src/core/intelligence.test.ts`
+- `src/server/api.test.ts`
+- `src/server/security.test.ts`
+- `src/server/phase2.test.ts`
+
+This is an initial audit map, not a substitute for re-inspecting every relevant file in the active workspace.
+
+Before making changes, independently verify that the current workspace matches the uploaded ZIP.
+
+If any files differ, record the differences and treat the active workspace carefully. Never overwrite newer user work with an older ZIP snapshot.
+
+# 2. PHASE ZERO — FORENSIC DISCOVERY
+
+Perform a read-only forensic inspection first.
+
+Inspect:
+
+- Every project directory.
+- Frontend components and routing.
+- Backend routes and middleware.
+- Database schema and migration history.
+- Database records and sidecar files.
+- Authentication and authorization.
+- AI execution paths.
+- Model configuration.
+- External integrations.
+- Dependency versions.
+- Lockfiles.
+- Tests.
+- Build scripts.
+- Documentation.
+- Environment configuration.
+- Backup artifacts.
+- Existing technical debt.
+
+Trace important features end to end.
+
+Frontend → API Client → Authentication → Authorization → Route → Service → Database / External Provider → Response → UI.
+
+Create an implementation matrix:
+
+| Capability | Classification |
+|---|---|
+| Verified working | IMPLEMENTED |
+| Partially working | PARTIAL |
+| Synthetic or mock | SIMULATED |
+| Described only | PLANNED |
+| Reproducibly defective | BROKEN |
+| Insufficient evidence | UNVERIFIED |
+
+Never infer functionality from component names, UI labels, comments, documentation, or route existence alone.
+
+Produce a prioritized defect register containing:
+
+- Finding ID.
+- Severity.
+- Exact file and relevant location.
+- Reproducibility.
+- Root cause.
+- User impact.
+- Security impact.
+- Proposed solution.
+- Dependencies.
+- Risk classification.
+- Verification criteria.
+
+Severity levels:
+
+- P0: Critical data loss, unauthorized access, or severe safety boundary failure.
+- P1: Major functional failure or security weakness.
+- P2: Important reliability or integration defect.
+- P3: Usability, maintainability, or documentation improvement.
+- P4: Optional enhancement.
+
+Do not begin major implementation until the baseline is established.
+
+# 3. PHASE ZERO — BACKUP-FIRST & CHANGE GOVERNANCE
+
+Before any source or database modification:
+
+1. Identify the active database path.
+2. Inspect SQLite WAL and SHM state.
+3. Establish a source-code recovery point.
+4. Create a database backup using the existing safe backup utility where possible.
+5. Verify database integrity.
+6. Generate a SHA-256 manifest.
+7. Record baseline file hashes for files expected to change.
+8. Record existing migration versions.
+9. Record database table counts and critical records.
+10. Create a change manifest.
+
+Do not simply copy a live SQLite main database while ignoring active WAL state.
+
+Use the existing verified hot-backup method or an equivalent transactionally safe procedure.
+
+Never reset the database.
+
+Never delete existing records.
+
+Never rewrite historical migrations casually.
+
+Never overwrite the only recovery point.
+
+After modifications, compare backup and current artifacts.
+
+A backup's existence does not prove successful restoration.
+
+If restoration is necessary, test it against an isolated recovery target first.
+
+## Change classes
+
+CLASS A — LOW RISK:
+- Documentation.
+- Isolated UI improvements.
+- Non-breaking code cleanup.
+- Safe validation fixes.
+
+CLASS B — MODERATE:
+- New services.
+- New tests.
+- Non-breaking database extensions.
+- Additional dependencies.
+- Internal contract improvements.
+
+CLASS C — HIGH:
+- Authentication changes.
+- Authorization changes.
+- Existing migration changes.
+- Data transformations.
+- Public API breaking changes.
+- Major architectural changes.
+
+CLASS D — DESTRUCTIVE:
+- Database reset.
+- Permanent data deletion.
+- Destructive migration.
+- Production credential changes.
+- Public deployment.
+- Git force operations.
+- Irreversible external actions.
+
+You may execute authorized Class A changes.
+
+Class B requires a written impact analysis, backup, and verification plan.
+
+Class C requires explicit approval before implementation.
+
+Class D requires explicit authorization for the exact operation.
+
+Do not deploy, push to a remote repository, spend money, expose credentials, or perform external irreversible actions.
+
+# 4. PRIORITY ZERO — REPAIR THE DESKTOP SIDEBAR SCROLL ARCHITECTURE
+
+Target:
+`src/App.tsx`
+
+The observed problem:
+
+When the Overview or another main content page scrolls, the desktop left navigation sidebar can also move because the outer layout is allowed to grow beyond the viewport.
+
+The existing layout uses:
+- A `min-h-screen` root shell.
+- A desktop sidebar without an explicit viewport-constrained height.
+- A main content area with `overflow-y-auto`.
+- Flex ancestors that may expand with their content.
+
+## Required final behavior
+
+The desktop layout must have three independently managed regions:
+
+1. Left navigation sidebar.
+2. Main content scroll area.
+3. Main content header.
+
+### Sidebar requirements
+
+- Remain stationary during main content scrolling.
+- Occupy the intended viewport height.
+- Maintain its top branding section.
+- Maintain its bottom operator/session section.
+- Give the navigation list its own scroll container.
+- Scroll only the navigation list when navigation items exceed available height.
+- Never move vertically because Overview content is scrolling.
+- Never create unnecessary horizontal scrolling.
+- Preserve active navigation state.
+
+### Main content requirements
+
+- Have an independent vertical scroll container.
+- Scroll Overview and other modules without moving the sidebar.
+- Keep the top header stationary relative to the main content shell.
+- Avoid document-level scrolling conflicts.
+- Prevent flex children from expanding beyond available height.
+- Preserve normal page navigation and refresh behavior.
+
+### Engineering implementation
+
+Evaluate an appropriate viewport-constrained layout using:
+
+- `h-dvh` with a safe fallback where needed.
+- `min-h-0` on critical flex children.
+- `overflow-hidden` on the outer application shell.
+- An independently scrollable sidebar navigation element.
+- An independently scrollable main element.
+- Correct flex sizing and shrink behavior.
+
+Do not blindly add `position: fixed` if a stable flex layout solves the issue more safely.
+
+Preserve the existing responsive layout.
+
+### Mobile behavior
+
+The mobile navigation drawer must remain functional.
+
+Verify:
+- Drawer opens.
+- Drawer closes.
+- Backdrop closes the drawer.
+- Navigation selection works.
+- Long navigation lists scroll independently.
+- Background content does not accidentally scroll while the drawer is active.
+
+### Required verification
+
+Test:
+
+1. Short Overview page.
+2. Long Overview page.
+3. Every major navigation section.
+4. Long sidebar navigation.
+5. Different desktop viewport heights.
+6. Tablet layout.
+7. Mobile drawer.
+8. Browser zoom.
+9. Keyboard navigation.
+10. No unwanted horizontal overflow.
+
+If browser automation is available, use it and capture before/after evidence.
+
+Do not claim the issue is fixed based only on changing CSS classes.
+
+# 5. PRIORITY ZERO — COMPLETE VANTA BRAIN FORENSIC REPAIR
+
+Target files:
+
+- `src/components/VantaBrainView.tsx`
+- `src/api/client.ts`
+- `src/server/ai.ts`
+- `src/server/routes.ts`
+- `src/server/config.ts`
+- `src/server/validation.ts`
+- Relevant core types.
+- Relevant tests.
+
+## Existing observed behavior
+
+The current database contains two recorded Brain executions.
+
+Both used:
+
+`DETERMINISTIC_CORE_FALLBACK`
+
+Both recorded:
+
+`deterministic-core-v2`
+
+Their recorded latencies were approximately:
+
+- 7004 ms.
+- 12006 ms.
+
+Each recorded ten verified facts.
+
+Therefore, the deterministic database-grounded fallback exists, but successful Gemini synthesis is not established by these records.
+
+The existing code also contains:
+
+- A hardcoded model identifier.
+- A 3500 ms Gemini request timeout.
+- Catch-all fallback behavior.
+- An HTTP 200 response for deterministic fallback.
+- An audit status of SUCCESS even when fallback is used.
+- No sufficiently detailed persisted provider failure classification.
+- A Brain UI that unconditionally advertises Gemini functionality.
+- Tests that allow either deterministic fallback or Gemini without proving real model success.
+
+Do not simply increase the timeout or replace the model name without root-cause analysis.
+
+## 5.1 Trace the complete Brain request
+
+Follow:
+
+User Input
+→ VantaBrainView
+→ vantaApi.queryBrain
+→ Authorization
+→ `/brain/query`
+→ validateBrainQueryBody
+→ Facility Scope
+→ runVantaBrainQuery
+→ Tool Planning
+→ Scoped Tool Execution
+→ Evidence Index
+→ Gemini Client
+→ Model Request
+→ Response Parsing
+→ Structured Schema Validation
+→ Citation Validation
+→ Database Persistence
+→ Audit Logging
+→ Frontend Rendering.
+
+Identify every failure point.
+
+Inspect actual request and response contracts.
+
+Inspect the runtime environment.
+
+Verify whether the Gemini API key is present without printing, exposing, logging, or returning its value.
+
+## 5.2 Verify model and provider compatibility
+
+The current source uses:
+
+`gemini-4-hydrogen`
+
+Do not assume that a model name shown in an editor's model selector is automatically a valid model identifier for the Gemini API.
+
+Verify:
+
+- The actual Google AI Studio API model identifier.
+- Current `@google/genai` SDK compatibility.
+- Provider API availability.
+- Model availability for the project's API credentials.
+- Required API permissions.
+- Runtime secret injection.
+- Request configuration compatibility.
+- Structured output support.
+- Thinking configuration compatibility.
+
+Use actual provider documentation, SDK metadata, or a controlled runtime test.
+
+Never invent a model identifier.
+
+Do not silently downgrade to another model.
+
+If a replacement model is necessary, document the reason, capabilities, cost implications, and compatibility, and request approval if it materially changes the provider or model strategy.
+
+## 5.3 Centralize model configuration
+
+Inspect the duplicate model configuration in:
+
+- `src/server/ai.ts`
+- `src/server/config.ts`
+
+Create one authoritative configuration source.
+
+Support a validated environment-based model identifier where appropriate.
+
+Prevent model configuration drift.
+
+Expose only safe metadata in health and diagnostics responses.
+
+Never expose API keys.
+
+## 5.4 Repair timeout and cancellation behavior
+
+The existing Gemini Brain request uses a 3500 ms timeout.
+
+Determine whether this timeout is causing normal model requests to fall back.
+
+Evaluate actual latency and provider behavior.
+
+Implement:
+
+- A configurable, bounded timeout.
+- Suitable timeout defaults based on observed provider latency.
+- Abort/cancellation support where supported by the SDK.
+- Bounded retries for transient errors only.
+- Exponential backoff with jitter where justified.
+- No retries for invalid credentials, unauthorized access, or invalid model identifiers.
+- Request cancellation when the client disconnects, where safely supported.
+- Protection against abandoned requests consuming resources.
+
+Do not implement unlimited retries.
+
+Do not retry unsafe operations.
+
+Brain query operations must remain read-only.
+
+## 5.5 Improve deterministic fallback governance
+
+Keep the deterministic fallback as a reliability mechanism.
+
+However, it must not pretend to be Gemini.
+
+Clearly distinguish:
+
+- GEMINI_SUCCESS
+- DETERMINISTIC_FALLBACK
+- DEGRADED
+- FAILED
+
+The UI must identify which engine actually generated the response.
+
+The fallback must remain evidence-grounded and facility-scoped.
+
+Never fabricate AI reasoning, verified facts, or citations.
+
+If Gemini fails, communicate that Gemini synthesis was unavailable and deterministic analysis was returned.
+
+## 5.6 Fix audit and execution status semantics
+
+Inspect `/brain/query`.
+
+The current route records audit status `SUCCESS` regardless of fallback.
+
+Correct the status model.
+
+Persist appropriate metadata:
+
+- Execution ID.
+- Correlation ID.
+- Engine used.
+- Provider.
+- Model identifier.
+- Execution status.
+- Latency.
+- Tool execution statuses.
+- Verified facts count.
+- Rejected citations count.
+- Sanitized failure category.
+- Timestamp.
+
+Do not persist secrets, raw credentials, or unnecessary provider payloads.
+
+Do not report a successful Gemini execution when deterministic fallback generated the response.
+
+Use backward-compatible database changes where possible.
+
+Do not rewrite existing migrations.
+
+## 5.7 Improve evidence and tool execution
+
+Review:
+
+- Intent classification.
+- Tool planning.
+- Tool allowlists.
+- Tool authorization.
+- Tool execution errors.
+- Evidence indexing.
+- Evidence source completeness.
+- Citation validation.
+- Evidence serialization.
+- Context truncation.
+
+The existing implementation slices serialized evidence to a character limit.
+
+Do not blindly truncate JSON in a way that can produce incomplete or misleading context.
+
+Implement safe size-aware evidence selection:
+
+1. Prioritize relevant records.
+2. Preserve complete JSON structures.
+3. Respect tenant and facility scope.
+4. Respect data freshness.
+5. Preserve source IDs.
+6. Preserve data origin.
+7. Report omitted evidence.
+8. Avoid exceeding model context limits.
+
+Record each tool's actual result status.
+
+Do not list a tool as successfully executed if it failed.
+
+Do not claim that every planned investigation stage completed if a required stage failed.
+
+## 5.8 Improve Brain response validation
+
+Validate:
+
+- JSON syntax.
+- Required fields.
+- Field types.
+- Empty or malformed model responses.
+- Invalid enums.
+- Invalid confidence values.
+- Unknown evidence references.
+- Missing source records.
+- Excessively long outputs.
+- Unexpected provider responses.
+
+Citation validation must remain server-side.
+
+Only authorized retrieved records can support verified facts.
+
+Reject fabricated source IDs.
+
+Never convert ESTIMATED or SIMULATED evidence into MEASURED claims.
+
+## 5.9 Fix misleading confidence values
+
+Inspect the current confidence calculation.
+
+The source contains hardcoded confidence percentages based on whether verified facts exist and whether measured evidence is present.
+
+These values must not be presented as calibrated model probability without validation.
+
+Either:
+
+- Replace them with a defensible, evaluated confidence methodology; or
+- Label them as heuristic evidence-strength indicators; or
+- Remove misleading numerical confidence presentation.
+
+Document the calculation and its limitations.
+
+## 5.10 Improve Brain UI
+
+The Brain interface must dynamically show:
+
+- Provider availability.
+- Model identifier.
+- Actual execution engine.
+- Execution status.
+- Latency.
+- Tool results.
+- Verified evidence count.
+- Rejected citation count.
+- Degraded fallback warning.
+- Clear error messages.
+- Data freshness.
+- Uncertainty.
+
+Do not permanently display `FUNCTIONAL` when Gemini is unavailable.
+
+Show the actual current capability state.
+
+Provide a useful diagnostic explanation without exposing secrets or internal sensitive data.
+
+Preserve the existing professional visual design.
+
+## 5.11 Brain error handling
+
+Inspect the Express route and global error handling.
+
+Ensure asynchronous failures produce safe, structured HTTP responses.
+
+Prevent unhandled promise rejections.
+
+Do not expose stack traces, internal file paths, provider credentials, or sensitive database information to users.
+
+Maintain useful correlation IDs for debugging.
+
+# 6. BRAIN TESTING & VERIFICATION MATRIX
+
+Expand tests to cover:
+
+1. Gemini configured and successful.
+2. Gemini key missing.
+3. Invalid model identifier.
+4. Provider authentication failure.
+5. Provider permission failure.
+6. Rate limiting.
+7. Provider service unavailable.
+8. Request timeout.
+9. Request cancellation.
+10. Malformed JSON response.
+11. Invalid structured schema.
+12. Missing required fields.
+13. Invalid citations.
+14. Valid citations.
+15. SIMULATED evidence labeling.
+16. ESTIMATED evidence labeling.
+17. Tenant isolation.
+18. Facility isolation.
+19. Unauthorized Brain permission.
+20. Tool execution failure.
+21. Partial tool failure.
+22. Empty evidence.
+23. Large evidence context.
+24. Fallback status.
+25. Audit status correctness.
+26. Brain run persistence.
+27. Correlation ID preservation.
+28. UI degraded-state rendering.
+
+Use mocked provider responses for deterministic automated tests.
+
+Add an optional live Gemini integration smoke test only when a valid API key and supported model are available.
+
+Live provider tests must not be required for the standard offline test suite.
+
+Never print API keys in test output.
+
+A deterministic fallback test does not prove Gemini is working.
+
+# 7. PRIORITY ONE — README.md COMPLETE REBUILD
+
+Target:
+
+`README.md`
+
+The existing README is an insufficient generic AI Studio starter document.
+
+Replace it with a complete, professional VANTA AI project document.
+
+Do not merely add a few paragraphs.
+
+The root README must include:
+
+## Product
+- Project name.
+- Overview.
+- Vision.
+- Mission.
+- Target industries.
+- Core product capabilities.
+
+## Current implementation
+- Implemented modules.
+- Partially implemented modules.
+- Simulated modules.
+- Planned capabilities.
+- Known limitations.
+
+## Architecture
+- System architecture.
+- Frontend architecture.
+- Backend architecture.
+- AI architecture.
+- Database architecture.
+- Security architecture.
+- Integration architecture.
+- Data flow.
+
+## Technology stack
+- Frameworks.
+- Runtime.
+- SDKs.
+- Database.
+- Build tooling.
+- Testing tooling.
+- Actual versions.
+
+## Repository structure
+Explain the purpose of important directories and files.
+
+## Installation
+- Supported runtime versions.
+- Prerequisites.
+- Dependency installation.
+- Environment configuration.
+- Local development setup.
+
+## Running the project
+- Development command.
+- Production build.
+- Production startup.
+- Preview.
+- Troubleshooting.
+
+## Environment variables
+Document every required and optional environment variable.
+
+Use placeholders only.
+
+Never include actual secrets.
+
+## Backend and APIs
+- Important routes.
+- Request/response contracts.
+- Authentication.
+- Authorization.
+- Rate limiting.
+- Error behavior.
+
+## Database
+- SQLite configuration.
+- Database location.
+- Migration system.
+- Migration versions.
+- Backup.
+- SHA-256 verification.
+- Recovery procedures.
+
+## VANTA Brain
+- Execution pipeline.
+- Model configuration.
+- API key setup.
+- Evidence retrieval.
+- Citation validation.
+- Deterministic fallback.
+- Error handling.
+- Current limitations.
+
+## Integrations
+- Supported protocol adapters.
+- Simulated integrations.
+- Configured integrations.
+- Physical connectivity limitations.
+- Camera integration limitations.
+
+## Testing
+- Test commands.
+- Test file locations.
+- Actual verified test results.
+- Tests not executed.
+- Optional live integration tests.
+
+## Security
+- Authentication.
+- Tenant isolation.
+- Facility permissions.
+- Secret handling.
+- Audit.
+- Operational safety boundaries.
+
+## Deployment
+- Build.
+- Runtime requirements.
+- Configuration.
+- Database persistence.
+- Health checks.
+- Recovery.
+- Deployment limitations.
+
+## Development
+- Engineering conventions.
+- Change governance.
+- Contribution guidelines.
+- Roadmap.
+- Known issues.
+
+The README must reflect actual code.
+
+Do not describe planned features as implemented.
+
+Do not claim tests passed unless they were actually executed.
+
+# 8. ARCHITECTURE DOCUMENTATION RECONCILIATION
+
+Target:
+
+`ARCHITECTURE.md`
+
+Inspect the existing architecture document against the actual source.
+
+Verify:
+
+- Module descriptions.
+- Database migration history.
+- Work-order state machine.
+- Brain pipeline.
+- AI model configuration.
+- Evidence taxonomy.
+- Connector lifecycle.
+- Security controls.
+- Test claims.
+- Backup and recovery.
+- Capability matrix.
+- Known limitations.
+
+Correct outdated or unsupported claims.
+
+Distinguish implemented behavior from architectural intention.
+
+Preserve valuable existing documentation.
+
+Add relevant supporting documents where justified:
+
+- `SECURITY.md`
+- `DATABASE.md`
+- `API.md`
+- `DEPLOYMENT.md`
+- `OPERATIONS.md`
+- `TESTING.md`
+- `CHANGELOG.md`
+- `ARCHITECTURE_DECISIONS.md`
+
+Do not create redundant documents without meaningful content.
+
+# 9. DEPENDENCY & REPRODUCIBLE BUILD REPAIR
+
+The uploaded project contains an empty `bun.lock`.
+
+The test environment also lacked installed dependencies.
+
+Inspect the package manager strategy.
+
+Choose one authoritative package manager.
+
+If npm is selected:
+
+- Generate a valid package-lock.json.
+- Ensure package.json and lockfile are consistent.
+- Document `npm ci`.
+- Verify installation reproducibility.
+
+If Bun is selected:
+
+- Generate a valid Bun lockfile.
+- Verify supported runtime compatibility.
+- Document installation commands.
+
+Do not maintain contradictory lockfiles without a documented reason.
+
+Do not casually upgrade major dependencies.
+
+Review:
+- React.
+- Vite.
+- TypeScript.
+- Express.
+- Google GenAI SDK.
+- SQLite runtime.
+- Test tooling.
+
+Resolve actual compatibility issues.
+
+Do not claim reproducible installation until it has been verified.
+
+# 10. CORE ARCHITECTURE QUALITY
+
+Review the system for:
+
+- Circular dependencies.
+- Duplicated business logic.
+- Hidden side effects.
+- Weak interfaces.
+- Incorrect ownership.
+- Inconsistent validation.
+- Unsafe shared state.
+- Poor error boundaries.
+- Unbounded resource usage.
+- Inconsistent data contracts.
+
+Preserve the modular platform architecture.
+
+Do not perform a wholesale rewrite.
+
+Use clear separation between:
+
+Presentation → API → Application → Domain → Data → Integration → AI → Governance.
+
+Maintain consistent contracts and explicit module ownership.
+
+Introduce Architecture Decision Records for significant changes.
+
+# 11. SECURITY & ZERO-TRUST HARDENING
+
+Review:
+
+- Authentication.
+- Session handling.
+- Token revocation.
+- Tenant isolation.
+- Facility authorization.
+- Role permissions.
+- API validation.
+- Rate limits.
+- CORS and security headers.
+- Cookie configuration.
+- Secret management.
+- File handling.
+- Audit integrity.
+- Prompt injection.
+- Tool permission enforcement.
+- Dependency vulnerabilities.
+
+Pay special attention to cross-tenant and cross-facility access.
+
+Never trust a facility ID or tenant ID supplied by an untrusted client without authorization.
+
+Never let Gemini output override application authorization.
+
+Never let AI agents access tools beyond their permission allowlists.
+
+Preserve fail-closed production configuration.
+
+Never weaken security to make a demo work.
+
+# 12. DATABASE & EVIDENCE GOVERNANCE
+
+Inspect all six existing migrations and their dependencies.
+
+Do not rewrite historical migrations.
+
+Use new forward-only migrations when necessary.
+
+Preserve existing records.
+
+Maintain transactional safety.
+
+Verify:
+
+- Foreign keys.
+- Unique constraints.
+- Indexes.
+- Tenant isolation.
+- State transitions.
+- Data provenance.
+- Backup integrity.
+
+The current database snapshot contains zero `evidence_provenance` records.
+
+Investigate whether this is expected for the current seed data or indicates incomplete evidence population.
+
+Do not invent provenance records to make dashboards appear populated.
+
+Add real provenance only where an actual event, operation, observation, or record justifies it.
+
+Preserve distinctions between:
+
+- MEASURED
+- OBSERVED
+- HUMAN_REPORTED
+- SYSTEM_RECORDED
+- ESTIMATED
+- INFERRED
+- PREDICTED
+- SIMULATED
+- UNKNOWN
+
+# 13. ASSET & INFRASTRUCTURE INTELLIGENCE
+
+Maintain the hierarchy:
+
+Organization → Site → Facility → Building → Floor → Zone → Asset → Equipment → Sensor.
+
+Validate relationships and ownership.
+
+Review Asset 360 capabilities.
+
+Ensure asset health and risk calculations have documented methodologies.
+
+Never add arbitrary health-score increments.
+
+Preserve stable entity IDs.
+
+Prevent orphaned relationships.
+
+# 14. INDUSTRIAL CONNECTOR & TELEMETRY GOVERNANCE
+
+Review the 10-stage connector lifecycle.
+
+Validate:
+
+- Configuration.
+- Authentication.
+- Connection.
+- Collection.
+- Normalization.
+- Monitoring.
+- Recovery.
+- Disconnection.
+
+Maintain honest states:
+
+- CONFIGURED
+- CONNECTED
+- DISCONNECTED
+- DEGRADED
+- SIMULATED
+- OFFLINE
+- ERROR
+- NOT_CONFIGURED
+
+A simulated gateway must never become a real connected gateway through UI changes alone.
+
+Preserve telemetry source identity, timestamp, unit, quality, and origin.
+
+Review duplicate detection, stale data, clock skew, and out-of-order handling.
+
+# 15. DIGITAL TWIN & PREDICTIVE INTELLIGENCE
+
+Preserve Digital Twin snapshots and graph-based simulations.
+
+Clearly distinguish:
+
+- Asset graph.
+- State synchronization.
+- Historical reconstruction.
+- Graph simulation.
+- Physics simulation.
+- Engineering-validated model.
+
+Do not represent graph traversal as physics validation.
+
+Preserve heuristic RUL labeling.
+
+Do not claim trained predictive AI without field data and appropriate validation.
+
+Ensure predictive metrics do not treat synthetic samples as field validation.
+
+# 16. WORKFLOW & OPERATIONAL STATE MACHINES
+
+Review work-order and approval workflows.
+
+Preserve:
+
+CREATED → PENDING_APPROVAL → APPROVED → IN_PROGRESS → VERIFICATION_PENDING → COMPLETED / NEEDS_FOLLOW_UP / UNRESOLVED.
+
+Validate every transition.
+
+Ensure:
+- Approval cannot be bypassed.
+- Execution cannot be fabricated.
+- Verification cannot be skipped.
+- Duplicate verification cannot create duplicate maintenance records.
+- Human-reported evidence remains distinguishable from measured evidence.
+
+Maintain transactional updates and idempotency.
+
+# 17. MULTI-AGENT GOVERNANCE
+
+Review all bounded agents.
+
+Ensure:
+- Explicit capabilities.
+- Tool allowlists.
+- Permission checks.
+- Execution budgets.
+- Timeouts.
+- Cancellation.
+- Idempotency.
+- Audit traces.
+- Failure isolation.
+- Human approval.
+
+Prevent infinite loops, duplicate operations, uncontrolled delegation, and privilege escalation.
+
+No agent may directly bypass physical safety systems.
+
+# 18. FRONTEND & ENTERPRISE UI QUALITY
+
+Preserve the existing VANTA visual identity.
+
+Improve:
+
+- Navigation.
+- Layout.
+- Typography.
+- Component consistency.
+- Responsive behavior.
+- Accessibility.
+- Data freshness.
+- Loading states.
+- Error states.
+- Empty states.
+- Status indicators.
+- Keyboard interaction.
+
+Every UI control must perform a real action or clearly show why it is unavailable.
+
+Charts must use genuine or explicitly simulated data.
+
+Do not invent metrics.
+
+Make important degraded states visible.
+
+# 19. API CONTRACT & ERROR GOVERNANCE
+
+Review all API routes.
+
+Validate:
+
+- Input schemas.
+- Output schemas.
+- Authentication.
+- Authorization.
+- HTTP status codes.
+- Error formats.
+- Pagination.
+- Rate limiting.
+- Request size limits.
+- Timeouts.
+- Idempotency.
+
+Ensure Express async route failures are handled safely.
+
+Avoid unhandled promise rejections.
+
+Never return stack traces or secrets to users.
+
+Preserve backward compatibility.
+
+# 20. OBSERVABILITY & RELIABILITY
+
+Improve operational diagnostics where justified.
+
+Use:
+
+- Structured logs.
+- Correlation IDs.
+- Health checks.
+- Readiness checks.
+- Provider status.
+- AI execution metrics.
+- API latency.
+- Database health.
+- Connector health.
+- Background task status.
+- Error categories.
+
+Do not report a service as healthy merely because its process is running.
+
+Separate liveness, readiness, provider availability, and functional correctness.
+
+# 21. PERFORMANCE & RESOURCE EFFICIENCY
+
+Optimize for the actual runtime environment.
+
+Review:
+
+- Frontend rendering.
+- API latency.
+- Database query performance.
+- Model latency.
+- Context size.
+- Memory consumption.
+- CPU usage.
+- Network requests.
+- Bundle size.
+- Retry behavior.
+
+Avoid unnecessary dependencies, duplicated inference, excessive background work, and oversized payloads.
+
+Use measurements before claiming improvements.
+
+# 22. TESTING & REGRESSION GOVERNANCE
+
+Execute the available project test suite after dependencies are correctly installed.
+
+Run, where available:
+
+- Dependency installation.
+- TypeScript validation.
+- Production build.
+- Unit tests.
+- Integration tests.
+- API tests.
+- Security tests.
+- Database migration tests.
+- Brain provider tests.
+- UI tests.
+- Responsive layout tests.
+
+Add tests for every meaningful fix.
+
+Do not remove or weaken tests to create artificial success.
+
+Report:
+
+- Command.
+- Environment.
+- Exit status.
+- Test count.
+- Passed.
+- Failed.
+- Skipped.
+- Not executed.
+- Known limitations.
+
+If tests cannot execute, explain the exact blocker.
+
+Do not invent successful results.
+
+# 23. RELEASE READINESS & CHANGE CONTROL
+
+Before delivery:
+
+- Review every changed file.
+- Inspect the complete diff.
+- Verify no unintended deletions.
+- Check database integrity.
+- Verify migration status.
+- Check backup SHA-256.
+- Run tests.
+- Run build.
+- Update documentation.
+- Review security implications.
+- Record remaining limitations.
+
+Do not publish or deploy.
+
+Do not push to Git.
+
+Do not reset or replace the database.
+
+Do not change credentials.
+
+Do not perform irreversible operations without explicit authorization.
+
+# 24. REQUIRED FINAL DOCUMENTATION
+
+Deliver:
+
+1. Updated README.md.
+2. Updated ARCHITECTURE.md.
+3. Relevant supporting documentation.
+4. Change manifest.
+5. Backup and SHA-256 report.
+6. Brain diagnostic and repair report.
+7. Sidebar layout verification report.
+8. Security assessment.
+9. Database integrity report.
+10. Test execution report.
+11. Build and typecheck report.
+12. Updated capability matrix.
+13. Remaining issues register.
+14. Release readiness assessment.
+
+# 25. FINAL ACCEPTANCE GATES
+
+The project must not be declared complete merely because code changes were made.
+
+## Gate A — Preservation
+Existing working modules remain functional.
+
+## Gate B — Sidebar
+Main content and sidebar scroll independently.
+
+## Gate C — Brain
+Actual Gemini execution is verified when credentials and supported model access are available.
+
+Fallback is accurately identified and audited.
+
+## Gate D — Security
+Tenant and facility isolation remain intact.
+
+## Gate E — Database
+Integrity is verified and existing data preserved.
+
+## Gate F — Documentation
+README accurately describes the actual project.
+
+## Gate G — Reproducibility
+Dependencies and lockfile are valid and installation is verified.
+
+## Gate H — Testing
+Relevant tests are actually executed and results recorded.
+
+## Gate I — Delivery
+Changes, limitations, recovery information, and readiness are documented.
+
+If a gate cannot be satisfied, report it as BLOCKED or PARTIALLY COMPLETE.
+
+Never fake acceptance.
+
+# 26. FINAL ENGINEERING REPORT
+
+Provide:
+
+### Executive Summary
+What was improved and why.
+
+### Original Baseline
+What was actually present.
+
+### Root Cause Findings
+Exact defects and evidence.
+
+### Implementation
+What changed.
+
+### File-Level Manifest
+Every modified, added, and removed file.
+
+### Sidebar Verification
+Desktop, tablet, and mobile results.
+
+### Brain Verification
+Provider, model, engine, status, latency, evidence, and tests.
+
+### Database
+Migrations, integrity, record preservation, provenance.
+
+### Security
+Authorization, isolation, and risk review.
+
+### Documentation
+README and architecture changes.
+
+### Testing
+Actual commands and exact results.
+
+### Backup
+Backup path, SHA-256, and verification status.
+
+### Remaining Work
+Unresolved defects and unimplemented capabilities.
+
+### Final Readiness
+Use one of:
+
+- NOT STARTED
+- DESIGNED
+- IMPLEMENTED
+- TESTED
+- INTEGRATION VERIFIED
+- RELEASE CANDIDATE
+- PRODUCTION ASSESSED
+
+Do not claim a higher status without evidence.
+
+---
+
+# 27. ULTIMATE NON-NEGOTIABLE DIRECTIVE
+
+VANTA AI is a long-term infrastructure intelligence platform.
+
+Preserve its existing architecture and useful functionality.
+
+Repair genuine defects.
+
+Build only meaningful capabilities.
+
+Keep AI outputs evidence-grounded.
+
+Maintain security boundaries.
+
+Protect database integrity.
+
+Distinguish simulation from physical reality.
+
+Never bypass independent industrial safety systems.
+
+Never fabricate testing or deployment results.
+
+Always inspect before changing.
+
+Always back up before risky modifications.
+
+Always verify after implementation.
+
+Always update README.md.
+
+Always disclose what remains incomplete.
+
+**THE FINAL OBJECTIVE: ENGINEER VANTA AI INTO A COHERENT, TRUSTWORTHY, SECURE, EVIDENCE-DRIVEN, TESTABLE AND OPERATIONALLY RELIABLE INFRASTRUCTURE INTELLIGENCE PLATFORM.**
+
+BUILD WITH PRECISION. PROTECT EXISTING WORK. REPAIR ROOT CAUSES. VERIFY EVERY CLAIM.

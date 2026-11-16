@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Check, X, FilePlus, RefreshCw, Database, ShieldOff } from 'lucide-react';
+import { Check, X, FilePlus, RefreshCw, Database, ShieldOff, Play, CheckCircle2 } from 'lucide-react';
 import { vantaApi } from '../api/client';
-import { canPerformAction } from '../core/intelligence';
+import { canPerformAction, getAllSectorProfiles, getSectorProfile } from '../core/intelligence';
 import type { CapabilityState, UserSession } from '../core/types';
 import type { BackupMetadataDto, SystemHealthStatus, WorkspaceData } from '../types/workspace';
 import { ModuleHeader, StatusText } from './StatusText';
@@ -20,6 +20,16 @@ export function OperationsWorkflowsView({
   const [priority, setPriority] = useState('HIGH');
   const [description, setDescription] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [activeWoId, setActiveWoId] = useState<string | null>(null);
+  const [woMode, setWoMode] = useState<'EXECUTE' | 'VERIFY' | null>(null);
+  const [execNotes, setExecNotes] = useState('');
+  const [verStatus, setVerStatus] = useState<'VERIFIED' | 'PARTIAL' | 'UNRESOLVED'>('VERIFIED');
+  const [verNotes, setVerNotes] = useState('');
+  const [downtimeMin, setDowntimeMin] = useState('30');
+  const [partsReplaced, setPartsReplaced] = useState('None');
+  const [incTitle, setIncTitle] = useState('');
+  const [incDesc, setIncDesc] = useState('');
+  const [incSeverity, setIncSeverity] = useState('HIGH');
 
   const effectiveAssetId = data.assets.some((a) => a.id === assetId)
     ? assetId
@@ -62,11 +72,109 @@ export function OperationsWorkflowsView({
     }
   };
 
+  const handleExecuteWo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeWoId) return;
+    setFeedback(null);
+    try {
+      await vantaApi.executeWorkOrder(activeWoId, execNotes);
+      setFeedback(`Work order ${activeWoId} dispatched for execution (IN_PROGRESS).`);
+      setActiveWoId(null);
+      setWoMode(null);
+      setExecNotes('');
+      onRefresh();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Failed to execute work order.');
+    }
+  };
+
+  const handleRequestVerification = async (id: string) => {
+    setFeedback(null);
+    try {
+      await vantaApi.requestWorkOrderVerification(
+        id,
+        'Field execution work completed; submitted for post-action verification.'
+      );
+      setFeedback(`Work order ${id} transitioned to VERIFICATION_PENDING.`);
+      onRefresh();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Failed to request verification.');
+    }
+  };
+
+  const handleCancelWo = async (id: string) => {
+    setFeedback(null);
+    try {
+      await vantaApi.cancelWorkOrder(id, `Cancelled by ${user.fullName} prior to field execution.`);
+      setFeedback(`Work order ${id} cancelled.`);
+      onRefresh();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Failed to cancel work order.');
+    }
+  };
+
+  const handleVerifyWo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeWoId) return;
+    setFeedback(null);
+    try {
+      const res = await vantaApi.verifyWorkOrder(activeWoId, {
+        verificationStatus: verStatus,
+        verificationNotes: verNotes,
+        downtimeMinutes: Number(downtimeMin) || 30,
+        partsReplaced,
+      });
+      setFeedback(
+        `Work order ${activeWoId} transitioned to ${res.status} (verification: ${res.verificationStatus}) and logged in maintenance history.`
+      );
+      setActiveWoId(null);
+      setWoMode(null);
+      setVerNotes('');
+      onRefresh();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Verification failed.');
+    }
+  };
+
+  const handleCreateIncident = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFeedback(null);
+    const asset = data.assets.find((a) => a.id === effectiveAssetId);
+    const facId = asset?.facilityId || data.facilities[0]?.id;
+    if (!facId) return;
+    try {
+      await vantaApi.createIncident({
+        facilityId: facId,
+        assetId: asset?.id,
+        title: incTitle,
+        description: incDesc,
+        severity: incSeverity,
+      });
+      setIncTitle('');
+      setIncDesc('');
+      setFeedback('Incident logged and linked to tenant provenance ledger.');
+      onRefresh();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Failed to log incident.');
+    }
+  };
+
+  const handleIncidentStatus = async (id: string, status: 'INVESTIGATING' | 'MITIGATED' | 'RESOLVED') => {
+    setFeedback(null);
+    try {
+      await vantaApi.updateIncidentStatus(id, status);
+      setFeedback(`Incident ${id} transitioned to ${status}.`);
+      onRefresh();
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Incident update failed.');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <ModuleHeader
-        title="Operations, Work Orders & Human Approvals"
-        subtitle="Consequential operational recommendations and maintenance isolations require explicit RBAC and facility-authorized human approval."
+        title="Operations, Approvals, Execution & Verification"
+        subtitle="Closed-loop governance: RECOMMEND → APPROVE → EXECUTE → VERIFY. Physical isolations require authorized sign-off and post-action verification."
         capability="FUNCTIONAL"
       />
 
@@ -127,7 +235,7 @@ export function OperationsWorkflowsView({
         </div>
       </section>
 
-      {/* Work Order Creation + Registry */}
+      {/* Work Order Creation + Closed-Loop EXECUTE / VERIFY Ledger */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <form onSubmit={handleCreateWorkOrder} className="lg:col-span-5 bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-3.5">
           <h2 className="text-sm font-semibold text-slate-100">Draft Maintenance Work Order</h2>
@@ -186,31 +294,272 @@ export function OperationsWorkflowsView({
         </form>
 
         <div className="lg:col-span-7 bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
-          <div className="px-5 py-3.5 border-b border-[#1E293B]">
-            <h2 className="text-sm font-semibold text-slate-100">Work Orders Ledger</h2>
+          <div className="px-5 py-3.5 border-b border-[#1E293B] flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-100">Work Orders Ledger (Execute & Verify)</h2>
+            <span className="text-xs font-mono text-slate-400">{data.workOrders.length} orders</span>
           </div>
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[#1E293B] text-xs text-slate-400">
                 <th className="py-3 px-4">ID</th>
-                <th className="py-3 px-4">Title</th>
-                <th className="py-3 px-4">Priority</th>
+                <th className="py-3 px-4">Work Order</th>
                 <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4">Approved By</th>
+                <th className="py-3 px-4">Verification</th>
+                <th className="py-3 px-4 text-right">Closed-Loop Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1E293B] text-xs">
               {data.workOrders.map((wo) => (
                 <tr key={wo.id} className="hover:bg-[#161E2E]/60">
                   <td className="py-3 px-4 font-mono text-slate-400">{wo.id}</td>
-                  <td className="py-3 px-4 font-medium text-slate-100">{wo.title}</td>
-                  <td className="py-3 px-4"><StatusText value={wo.priority} /></td>
+                  <td className="py-3 px-4">
+                    <div className="font-medium text-slate-100">{wo.title}</div>
+                    {wo.executionNotes && (
+                      <div className="text-[11px] text-sky-300/90 mt-0.5 font-mono">
+                        Exec ({wo.executionMode || 'FIELD_DISPATCH_RECORDED'}): {wo.executionNotes}
+                      </div>
+                    )}
+                    {wo.verificationNotes && (
+                      <div className="text-[11px] text-emerald-300 mt-0.5">{wo.verificationNotes}</div>
+                    )}
+                  </td>
                   <td className="py-3 px-4"><StatusText value={wo.status} /></td>
-                  <td className="py-3 px-4 font-mono text-slate-400">{wo.approvedBy || 'Pending'}</td>
+                  <td className="py-3 px-4 font-mono text-slate-300">
+                    {wo.verificationStatus === 'LEGACY_UNVERIFIED' ? (
+                      <span className="text-amber-300" title="Historical CMMS baseline completed before post-action verification workflow">
+                        LEGACY_UNVERIFIED
+                      </span>
+                    ) : (
+                      wo.verificationStatus || 'PENDING'
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                    {wo.status === 'APPROVED' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveWoId(wo.id);
+                            setWoMode('EXECUTE');
+                            setExecNotes('');
+                          }}
+                          className="px-2.5 py-1 rounded bg-sky-700 hover:bg-sky-600 text-[11px] font-medium text-white inline-flex items-center gap-1"
+                        >
+                          <Play className="w-3 h-3" />
+                          Execute
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelWo(wo.id)}
+                          className="px-2 py-1 rounded border border-slate-700 hover:border-rose-700 text-[11px] text-slate-300"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                    {wo.status === 'IN_PROGRESS' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleRequestVerification(wo.id)}
+                          className="px-2 py-1 rounded border border-sky-700 text-sky-300 hover:bg-sky-950/60 text-[11px] font-medium"
+                        >
+                          Ready for Verification
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveWoId(wo.id);
+                            setWoMode('VERIFY');
+                            setVerNotes('');
+                          }}
+                          className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-[11px] font-medium text-white inline-flex items-center gap-1"
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          Verify Outcome
+                        </button>
+                      </>
+                    )}
+                    {wo.status === 'VERIFICATION_PENDING' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveWoId(wo.id);
+                          setWoMode('VERIFY');
+                          setVerNotes('');
+                        }}
+                        className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-[11px] font-medium text-white inline-flex items-center gap-1"
+                      >
+                        <CheckCircle2 className="w-3 h-3" />
+                        Verify Outcome
+                      </button>
+                    )}
+                    {wo.status === 'COMPLETED' && wo.verificationStatus === 'VERIFIED' && (
+                      <span className="font-mono text-[11px] text-emerald-400">Verified Complete</span>
+                    )}
+                    {wo.status === 'COMPLETED' && wo.verificationStatus === 'LEGACY_UNVERIFIED' && (
+                      <span className="font-mono text-[11px] text-amber-300">Legacy Unverified</span>
+                    )}
+                    {wo.status === 'NEEDS_FOLLOW_UP' && (
+                      <span className="font-mono text-[11px] text-amber-400">Follow-Up Required</span>
+                    )}
+                    {wo.status === 'UNRESOLVED' && (
+                      <span className="font-mono text-[11px] text-rose-400">Unresolved</span>
+                    )}
+                    {wo.status === 'CANCELLED' && (
+                      <span className="font-mono text-[11px] text-slate-500">Cancelled</span>
+                    )}
+                    {wo.status === 'PENDING_APPROVAL' && (
+                      <span className="font-mono text-[11px] text-slate-500">Awaiting Sign-Off</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {activeWoId && woMode === 'EXECUTE' && (
+            <form onSubmit={handleExecuteWo} className="p-4 border-t border-[#1E293B] bg-[#0B0F17] space-y-2.5">
+              <div className="text-xs font-semibold text-sky-300">Record Field Execution Start ({activeWoId})</div>
+              <div className="text-[11px] text-slate-400 font-mono">
+                Boundary Notice: This records field workflow dispatch (FIELD_DISPATCH_RECORDED) and does NOT directly actuate physical PLC/SCADA equipment.
+              </div>
+              <input
+                required
+                value={execNotes}
+                onChange={(e) => setExecNotes(e.target.value)}
+                placeholder="Document LOTO lock number, technician dispatch & field procedure notes..."
+                className="w-full px-3 py-2 rounded bg-[#111827] border border-[#243044] text-xs text-slate-100"
+              />
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => { setActiveWoId(null); setWoMode(null); }} className="px-3 py-1 text-xs text-slate-400">Cancel</button>
+                <button type="submit" className="px-3.5 py-1.5 rounded bg-sky-600 text-xs font-medium text-white">Confirm Execution Dispatch</button>
+              </div>
+            </form>
+          )}
+
+          {activeWoId && woMode === 'VERIFY' && (
+            <form onSubmit={handleVerifyWo} className="p-4 border-t border-[#1E293B] bg-[#0B0F17] space-y-2.5">
+              <div className="text-xs font-semibold text-emerald-300">Verify Post-Action Outcome ({activeWoId})</div>
+              <div className="text-[11px] text-slate-400 font-mono">
+                VERIFIED → COMPLETED · PARTIAL → NEEDS_FOLLOW_UP · UNRESOLVED → UNRESOLVED (Asset health score remains strictly telemetry-driven)
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <select
+                  aria-label="Outcome verification status"
+                  value={verStatus}
+                  onChange={(e) => setVerStatus(e.target.value as 'VERIFIED' | 'PARTIAL' | 'UNRESOLVED')}
+                  className="px-3 py-1.5 rounded bg-[#111827] border border-[#243044] text-xs text-slate-100"
+                >
+                  <option value="VERIFIED">VERIFIED → COMPLETED</option>
+                  <option value="PARTIAL">PARTIAL → NEEDS_FOLLOW_UP</option>
+                  <option value="UNRESOLVED">UNRESOLVED → UNRESOLVED</option>
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  value={downtimeMin}
+                  onChange={(e) => setDowntimeMin(e.target.value)}
+                  placeholder="Downtime min"
+                  className="px-3 py-1.5 rounded bg-[#111827] border border-[#243044] text-xs text-slate-100"
+                />
+                <input
+                  value={partsReplaced}
+                  onChange={(e) => setPartsReplaced(e.target.value)}
+                  placeholder="Parts replaced"
+                  className="px-3 py-1.5 rounded bg-[#111827] border border-[#243044] text-xs text-slate-100"
+                />
+              </div>
+              <input
+                required
+                value={verNotes}
+                onChange={(e) => setVerNotes(e.target.value)}
+                placeholder="Post-action telemetry & physical inspection verification notes..."
+                className="w-full px-3 py-2 rounded bg-[#111827] border border-[#243044] text-xs text-slate-100"
+              />
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => { setActiveWoId(null); setWoMode(null); }} className="px-3 py-1 text-xs text-slate-400">Cancel</button>
+                <button type="submit" className="px-3.5 py-1.5 rounded bg-emerald-600 text-xs font-medium text-white">Record Verified Outcome</button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+
+      {/* Incident Logging & Status Progression */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <form onSubmit={handleCreateIncident} className="lg:col-span-5 bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-slate-100">Log Operational Incident</h2>
+          <input
+            required
+            value={incTitle}
+            onChange={(e) => setIncTitle(e.target.value)}
+            placeholder="Incident title (e.g. Chiller Supply Delta-T Excursion)"
+            className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
+          />
+          <select
+            aria-label="Incident severity"
+            value={incSeverity}
+            onChange={(e) => setIncSeverity(e.target.value)}
+            className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
+          >
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="HIGH">HIGH</option>
+            <option value="MEDIUM">MEDIUM</option>
+            <option value="LOW">LOW</option>
+          </select>
+          <textarea
+            required
+            rows={2}
+            value={incDesc}
+            onChange={(e) => setIncDesc(e.target.value)}
+            placeholder="Observed symptoms, affected zone, and safety context..."
+            className="w-full px-3 py-2 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100"
+          />
+          <button type="submit" className="w-full py-2 px-4 rounded border border-[#243044] hover:border-sky-500 text-xs font-medium text-slate-100">
+            Log Incident & Open Investigation
+          </button>
+        </form>
+
+        <div className="lg:col-span-7 bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto">
+          <div className="px-5 py-3.5 border-b border-[#1E293B]">
+            <h2 className="text-sm font-semibold text-slate-100">Incident Lifecycle Registry</h2>
+          </div>
+          <div className="divide-y divide-[#1E293B] text-xs">
+            {data.incidents.map((inc) => (
+              <div key={inc.id} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 font-mono">
+                    <StatusText value={inc.severity} />
+                    <StatusText value={inc.status} />
+                    <span className="text-slate-500">{inc.id}</span>
+                  </div>
+                  <div className="font-medium text-slate-100">{inc.title}</div>
+                  <div className="text-slate-400">{inc.description}</div>
+                </div>
+                {inc.status !== 'RESOLVED' && (
+                  <div className="flex items-center gap-1.5">
+                    {inc.status === 'OPEN' && (
+                      <button
+                        type="button"
+                        onClick={() => handleIncidentStatus(inc.id, 'INVESTIGATING')}
+                        className="px-2.5 py-1 rounded border border-[#243044] hover:border-sky-500 text-[11px] text-slate-200"
+                      >
+                        Investigate
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleIncidentStatus(inc.id, 'RESOLVED')}
+                      className="px-2.5 py-1 rounded bg-emerald-800/70 hover:bg-emerald-700 text-[11px] text-white"
+                    >
+                      Mark Resolved
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -428,6 +777,44 @@ export function SecurityGovernanceView({
           </tbody>
         </table>
       </div>
+
+      {/* Data Provenance & Lineage Ledger */}
+      <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-x-auto" data-testid="provenance-ledger">
+        <div className="px-5 py-3.5 border-b border-[#1E293B] flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-100">Evidence Provenance & Lineage Ledger</h2>
+          <span className="text-xs font-mono text-slate-400">{data.provenanceRecords?.length || 0} lineage records</span>
+        </div>
+        {!data.provenanceRecords || data.provenanceRecords.length === 0 ? (
+          <div className="p-5 text-xs text-slate-400">
+            No provenance entries generated yet. Telemetry ingestion, vision inspections, and verified work orders automatically log origin lineage here.
+          </div>
+        ) : (
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[#1E293B] text-xs text-slate-400">
+                <th className="py-3 px-4">Module</th>
+                <th className="py-3 px-4">Data Mode</th>
+                <th className="py-3 px-4">Processing Method</th>
+                <th className="py-3 px-4">Summary</th>
+                <th className="py-3 px-4">Timestamp</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1E293B] text-xs">
+              {data.provenanceRecords.slice(0, 15).map((p) => (
+                <tr key={p.id} className="hover:bg-[#161E2E]/60">
+                  <td className="py-2.5 px-4 font-mono text-sky-300">{p.sourceModule}</td>
+                  <td className="py-2.5 px-4"><StatusText value={p.dataMode} /></td>
+                  <td className="py-2.5 px-4 text-slate-300">{p.processingMethod}</td>
+                  <td className="py-2.5 px-4 text-slate-400">{p.summary}</td>
+                  <td className="py-2.5 px-4 font-mono text-slate-500 whitespace-nowrap">
+                    {new Date(p.timestamp).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
@@ -520,11 +907,14 @@ export function AdministrationView({
   data: WorkspaceData;
   user: UserSession;
 }) {
+  const allProfiles = getAllSectorProfiles();
+  const [selectedSector, setSelectedSector] = useState(data.organization.industry);
+  const sectorProfile = getSectorProfile(selectedSector);
   return (
     <div className="space-y-6">
       <ModuleHeader
-        title="Tenant & Role Administration"
-        subtitle="Organization profile, multi-facility scopes, and RBAC directory (visible to Organization and Platform Administrators)."
+        title="Tenant, Sector Configuration & Role Administration"
+        subtitle="Organization profile, configurable 8-industry sector templates, multi-facility scopes, and RBAC directory."
         capability="FUNCTIONAL"
       />
 
@@ -544,6 +934,57 @@ export function AdministrationView({
         <div>
           <span className="text-slate-400 block">Region</span>
           <span className="font-mono text-slate-200">{data.organization.region}</span>
+        </div>
+      </div>
+
+      {/* Section 17: Configurable 8-Industry Sector Configuration Profiles */}
+      <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 space-y-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E293B] pb-2.5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">Industry Sector Configuration Profile — {sectorProfile.sector}</h2>
+            <p className="text-[11px] text-slate-400">
+              Inspect equipment classes, operating envelopes, recommended connectors, and hardware safety interlock policies across all 8 supported sectors.
+            </p>
+          </div>
+          <select
+            aria-label="Inspect industry sector profile"
+            value={selectedSector}
+            onChange={(e) => setSelectedSector(e.target.value as typeof selectedSector)}
+            className="px-3 py-1.5 rounded bg-[#0B0F17] border border-[#243044] text-xs text-slate-100 font-mono"
+          >
+            {allProfiles.map((p) => (
+              <option key={p.sector} value={p.sector}>{p.sector}</option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <div className="text-slate-400 mb-1">Monitored Equipment Classes</div>
+            <ul className="space-y-1 text-slate-200 font-mono text-[11px]">
+              {sectorProfile.monitoredEquipmentClasses.map((c) => <li key={c}>• {c}</li>)}
+            </ul>
+          </div>
+          <div>
+            <div className="text-slate-400 mb-1">Critical Operating Envelopes</div>
+            <ul className="space-y-1 text-slate-200 font-mono text-[11px]">
+              {sectorProfile.criticalEnvelopes.map((c) => <li key={c}>• {c}</li>)}
+            </ul>
+          </div>
+          <div>
+            <div className="text-slate-400 mb-1">Recommended Connectors & Standards</div>
+            <ul className="space-y-1 text-sky-300 font-mono text-[11px]">
+              {sectorProfile.recommendedConnectors.map((c) => <li key={c}>• {c}</li>)}
+            </ul>
+            {sectorProfile.standardsRef && (
+              <div className="mt-2 pt-2 border-t border-[#1E293B] text-[10px] font-mono text-slate-400">
+                Standards: {sectorProfile.standardsRef.join(' · ')}
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="text-slate-400 mb-1">Safety Interlock Boundary</div>
+            <p className="text-emerald-300 leading-relaxed">{sectorProfile.interlockBoundaryPolicy}</p>
+          </div>
         </div>
       </div>
 

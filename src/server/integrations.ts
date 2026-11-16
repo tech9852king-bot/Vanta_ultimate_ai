@@ -8,6 +8,7 @@ import { computeZScoreAnomaly } from '../core/intelligence.ts';
 import type {
   CameraCapabilityState,
   CapabilityState,
+  ConnectorLifecycleStage,
   DataOriginMode,
   UserSession,
 } from '../core/types.ts';
@@ -27,6 +28,9 @@ export interface IoTHealthProbeResult {
   protocol: string;
   status: 'CONNECTED' | 'SIMULATED' | 'DEGRADED' | 'NOT_CONFIGURED' | 'OFFLINE';
   capabilityState: CapabilityState;
+  lifecycleStage: ConnectorLifecycleStage;
+  dataFreshnessSec: number | null;
+  retryStatus: 'IDLE' | 'BACKOFF_RETRYING' | 'CIRCUIT_OPEN' | 'BLOCKED_MISSING_CREDENTIALS';
   latencyMs: number | null;
   consecutiveFailures: number;
   lastError: string | null;
@@ -102,7 +106,8 @@ export function probeCameraProviderHealth(
 }
 
 /**
- * Evaluates an industrial IoT gateway connector (MQTT, OPC UA, Modbus TCP, REST, WebSocket).
+ * Evaluates an industrial IoT gateway connector across the Part 9 10-Stage Lifecycle:
+ * REGISTER -> CONFIGURE -> VALIDATE -> AUTHENTICATE -> CONNECT -> COLLECT -> NORMALIZE -> MONITOR -> RECOVER -> DISCONNECT.
  * Physical hardware brokers unreachable in this sandbox report OFFLINE / NOT_CONFIGURED cleanly.
  * Never returns gateway credentials to the browser.
  */
@@ -138,11 +143,15 @@ export function probeIoTConnectorHealth(
   const now = new Date().toISOString();
 
   if (!conn.credential_ref || conn.status === 'NOT_CONFIGURED') {
+    const failures = (conn.consecutive_failures || 0) + 1;
     db.prepare(
-      'UPDATE iot_integrations SET status = ?, capability_state = ?, latency_ms = NULL, consecutive_failures = consecutive_failures + 1, last_error = ?, last_heartbeat_at = ? WHERE id = ?'
+      'UPDATE iot_integrations SET status = ?, capability_state = ?, lifecycle_stage = ?, data_freshness_sec = NULL, retry_status = ?, latency_ms = NULL, consecutive_failures = ?, last_error = ?, last_heartbeat_at = ? WHERE id = ?'
     ).run(
       'NOT_CONFIGURED',
       'NOT_CONFIGURED',
+      'VALIDATE',
+      'BLOCKED_MISSING_CREDENTIALS',
+      failures,
       'Missing vault credential reference or TLS client certificate.',
       now,
       conn.id
@@ -152,8 +161,11 @@ export function probeIoTConnectorHealth(
       protocol: conn.protocol,
       status: 'NOT_CONFIGURED',
       capabilityState: 'NOT_CONFIGURED',
+      lifecycleStage: 'VALIDATE',
+      dataFreshnessSec: null,
+      retryStatus: 'BLOCKED_MISSING_CREDENTIALS',
       latencyMs: null,
-      consecutiveFailures: (conn.consecutive_failures || 0) + 1,
+      consecutiveFailures: failures,
       lastError: 'Missing vault credential reference or TLS client certificate.',
       checkedAt: now,
     };
@@ -163,14 +175,17 @@ export function probeIoTConnectorHealth(
   if (conn.endpoint.includes('.internal')) {
     const latencyMs = 9 + Math.floor(Math.random() * 14);
     db.prepare(
-      'UPDATE iot_integrations SET status = ?, capability_state = ?, latency_ms = ?, consecutive_failures = 0, last_error = NULL, last_heartbeat_at = ? WHERE id = ?'
-    ).run('SIMULATED', 'SIMULATED', latencyMs, now, conn.id);
+      'UPDATE iot_integrations SET status = ?, capability_state = ?, lifecycle_stage = ?, data_freshness_sec = 0, retry_status = ?, latency_ms = ?, consecutive_failures = 0, last_error = NULL, last_heartbeat_at = ? WHERE id = ?'
+    ).run('SIMULATED', 'SIMULATED', 'MONITOR', 'IDLE', latencyMs, now, conn.id);
 
     return {
       connectorId: conn.id,
       protocol: conn.protocol,
       status: 'SIMULATED',
       capabilityState: 'SIMULATED',
+      lifecycleStage: 'MONITOR',
+      dataFreshnessSec: 0,
+      retryStatus: 'IDLE',
       latencyMs,
       consecutiveFailures: 0,
       lastError: 'Simulated gateway adapter active; physical plant LAN (.internal) not bridged.',
@@ -178,17 +193,21 @@ export function probeIoTConnectorHealth(
     };
   }
 
-  // External physical host probe fails cleanly in isolated container
+  // External physical host probe fails cleanly in isolated container and enters RECOVER stage
   const failures = (conn.consecutive_failures || 0) + 1;
+  const retryStatus = failures >= 5 ? 'CIRCUIT_OPEN' : 'BACKOFF_RETRYING';
   db.prepare(
-    'UPDATE iot_integrations SET status = ?, capability_state = ?, latency_ms = NULL, consecutive_failures = ?, last_error = ?, last_heartbeat_at = ? WHERE id = ?'
-  ).run('OFFLINE', 'NOT_CONFIGURED', failures, 'Gateway TCP handshake failed (host unreachable).', now, conn.id);
+    'UPDATE iot_integrations SET status = ?, capability_state = ?, lifecycle_stage = ?, data_freshness_sec = NULL, retry_status = ?, latency_ms = NULL, consecutive_failures = ?, last_error = ?, last_heartbeat_at = ? WHERE id = ?'
+  ).run('OFFLINE', 'NOT_CONFIGURED', 'RECOVER', retryStatus, failures, 'Gateway TCP handshake failed (host unreachable).', now, conn.id);
 
   return {
     connectorId: conn.id,
     protocol: conn.protocol,
     status: 'OFFLINE',
     capabilityState: 'NOT_CONFIGURED',
+    lifecycleStage: 'RECOVER',
+    dataFreshnessSec: null,
+    retryStatus,
     latencyMs: null,
     consecutiveFailures: failures,
     lastError: 'Gateway TCP handshake failed (host unreachable).',
@@ -197,7 +216,8 @@ export function probeIoTConnectorHealth(
 }
 
 /**
- * Normalizes and validates an incoming telemetry reading against tenant & facility boundaries.
+ * Normalizes and validates an incoming telemetry reading against tenant & facility boundaries,
+ * checking for duplicate readings and tagging data quality status (Part 10).
  */
 export function ingestNormalizedTelemetry(
   db: DatabaseSync,
@@ -212,7 +232,18 @@ export function ingestNormalizedTelemetry(
     thresholdCrit: number;
     mode: DataOriginMode;
   }
-): { telemetryId: string; facilityId: string; zScore: number; isAnomaly: boolean; severity: string; mode: DataOriginMode } | { error: string; statusCode: number } {
+):
+  | {
+      telemetryId: string;
+      facilityId: string;
+      zScore: number;
+      isAnomaly: boolean;
+      severity: string;
+      mode: DataOriginMode;
+      dataQualityStatus: 'VERIFIED' | 'DUPLICATE_DETECTED' | 'SIMULATED_SYNTHETIC';
+      deduplicated: boolean;
+    }
+  | { error: string; statusCode: number } {
   const conn = db
     .prepare('SELECT id, facility_id, status FROM iot_integrations WHERE id = ? AND tenant_id = ?')
     .get(input.connectorId, session.tenantId) as
@@ -241,9 +272,34 @@ export function ingestNormalizedTelemetry(
 
   const history = db
     .prepare(
-      'SELECT value FROM telemetry_points WHERE tenant_id = ? AND asset_id = ? AND metric_name = ? ORDER BY timestamp DESC LIMIT 10'
+      'SELECT id, value, z_score, is_anomaly, mode, timestamp FROM telemetry_points WHERE tenant_id = ? AND asset_id = ? AND metric_name = ? ORDER BY timestamp DESC LIMIT 10'
     )
-    .all(session.tenantId, asset.id, input.metricName) as Array<{ value: number }>;
+    .all(session.tenantId, asset.id, input.metricName) as Array<{
+    id: string;
+    value: number;
+    z_score: number;
+    is_anomaly: number;
+    mode: DataOriginMode;
+    timestamp: string;
+  }>;
+
+  // Part 10: Duplicate telemetry guard within 2-second ingestion window
+  const latest = history[0];
+  if (latest && Number(latest.value) === Number(input.value)) {
+    const deltaMs = Date.now() - Date.parse(latest.timestamp);
+    if (!Number.isNaN(deltaMs) && deltaMs >= 0 && deltaMs < 2000) {
+      return {
+        telemetryId: latest.id,
+        facilityId: asset.facility_id,
+        zScore: Number(latest.z_score),
+        isAnomaly: Boolean(latest.is_anomaly),
+        severity: latest.is_anomaly ? 'HIGH' : 'INFO',
+        mode: latest.mode,
+        dataQualityStatus: 'DUPLICATE_DETECTED',
+        deduplicated: true,
+      };
+    }
+  }
 
   const anomaly = computeZScoreAnomaly(
     history.map((h) => h.value),
@@ -257,6 +313,8 @@ export function ingestNormalizedTelemetry(
 
   // Prevent unverified simulated connector from claiming MEASURED origin
   const effectiveMode: DataOriginMode = conn.status === 'SIMULATED' ? 'SIMULATED' : input.mode;
+  const dataQualityStatus =
+    effectiveMode === 'SIMULATED' ? 'SIMULATED_SYNTHETIC' : 'VERIFIED';
 
   db.prepare(`
     INSERT INTO telemetry_points (id, tenant_id, facility_id, asset_id, metric_name, value, unit, threshold_warn, threshold_crit, z_score, is_anomaly, mode, timestamp)
@@ -277,6 +335,10 @@ export function ingestNormalizedTelemetry(
     now
   );
 
+  db.prepare(
+    'UPDATE iot_integrations SET lifecycle_stage = ?, data_freshness_sec = 0, last_heartbeat_at = ? WHERE id = ? AND tenant_id = ?'
+  ).run('COLLECT', now, conn.id, session.tenantId);
+
   return {
     telemetryId: telId,
     facilityId: asset.facility_id,
@@ -284,5 +346,8 @@ export function ingestNormalizedTelemetry(
     isAnomaly: anomaly.isAnomaly,
     severity: anomaly.severity,
     mode: effectiveMode,
+    dataQualityStatus,
+    deduplicated: false,
   };
 }
+
