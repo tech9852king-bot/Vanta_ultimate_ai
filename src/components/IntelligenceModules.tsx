@@ -308,29 +308,36 @@ export function RootCauseAnalysisView({
   const [selectedIncidentId, setSelectedIncidentId] = useState(data.incidents[0]?.id || '');
   const [decisionMap, setDecisionMap] = useState<Record<string, { decision: string; resolution: string }>>({});
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [correlating, setCorrelating] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   const effectiveIncidentId = data.incidents.some((inc) => inc.id === selectedIncidentId)
     ? selectedIncidentId
     : data.incidents[0]?.id || '';
 
   const handleCorrelate = async () => {
-    if (!effectiveIncidentId) return;
+    if (!effectiveIncidentId || correlating) return;
     setStatusMsg(null);
+    setCorrelating(true);
     try {
       await vantaApi.correlateRca(effectiveIncidentId);
       setStatusMsg('Generated new cross-system Root Cause Investigation dossier.');
       onRefresh();
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : 'Correlation failed.');
+    } finally {
+      setCorrelating(false);
     }
   };
 
   const handleResolve = async (rcaId: string) => {
+    if (resolvingId) return;
     const entry = decisionMap[rcaId];
     if (!entry?.decision?.trim() || !entry?.resolution?.trim()) {
       setStatusMsg('Enter both Human Decision and Resolution Record before verifying.');
       return;
     }
+    setResolvingId(rcaId);
     try {
       await vantaApi.resolveRca(rcaId, {
         humanDecision: entry.decision,
@@ -341,6 +348,8 @@ export function RootCauseAnalysisView({
       onRefresh();
     } catch (err) {
       setStatusMsg(err instanceof Error ? err.message : 'Failed to save resolution.');
+    } finally {
+      setResolvingId(null);
     }
   };
 
@@ -367,10 +376,11 @@ export function RootCauseAnalysisView({
             </select>
             <button
               type="button"
+              disabled={correlating}
               onClick={handleCorrelate}
-              className="px-3.5 py-2 rounded-md bg-sky-600 hover:bg-sky-500 text-xs font-medium text-white whitespace-nowrap"
+              className="px-3.5 py-2 rounded-md bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-xs font-medium text-white whitespace-nowrap"
             >
-              Run Correlation
+              {correlating ? 'Correlating...' : 'Run Correlation'}
             </button>
           </div>
         }
@@ -495,10 +505,11 @@ export function RootCauseAnalysisView({
                   <div className="md:col-span-2">
                     <button
                       type="button"
+                      disabled={resolvingId === rca.id}
                       onClick={() => handleResolve(rca.id)}
-                      className="w-full py-2 px-3 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-medium"
+                      className="w-full py-2 px-3 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white font-medium"
                     >
-                      Verify & Close
+                      {resolvingId === rca.id ? 'Verifying...' : 'Verify & Close'}
                     </button>
                   </div>
                 </div>

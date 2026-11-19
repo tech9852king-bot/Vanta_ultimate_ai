@@ -3,7 +3,7 @@
 
 **Product:** VANTA AI  
 **Category:** Universal Infrastructure Intelligence & Operations Platform  
-**Runtime Stack:** Node.js + Express + SQLite (WAL, Foreign Keys, Schema Migrations `001`–`007`) + React 19 + TypeScript + Tailwind CSS 4 + `@google/genai` (`gemini-4-hydrogen`)
+**Runtime Stack:** Node.js + Express + SQLite (WAL, Foreign Keys, Schema Migrations `001`–`009`) + React 19 + TypeScript + Tailwind CSS 4 + `@google/genai` (`gemini-4-hydrogen`)
 
 ---
 
@@ -44,10 +44,12 @@ VANTA AI connects fragmented industrial equipment, telemetry sensors, cameras, o
 | **CHG-V4-004** | **CLASS A (Safe)** | `/README.md`, `/.npmrc`, `/.env.example`, `/ARCHITECTURE.md` | Created comprehensive root `/README.md`, added `.npmrc` (`legacy-peer-deps=true`) alongside verified `bun.lock`, and reconciled `/ARCHITECTURE.md`. | `compile_applet`, `lint_applet`, `npm test`, and `bun install --frozen-lockfile`. |
 | **CHG-V6-001** | **CLASS B (Controlled)** | `/src/server/config.ts`, `/src/server/ai.ts`, `/src/core/types.ts`, `/src/server/routes.ts`, `/src/api/client.ts`, `/src/components/VantaBrainView.tsx` | V6 Section 4: Updated `SUPPORTED_GEMINI_MODELS` (`gemini-4-hydrogen`, `gemini-3.1-flash-lite`, `gemini-4-argon`, `gemini-4-carbon`), increased `maxOutputTokens` to `4096` (preventing `gemini-4-hydrogen` thinking-token output truncation), added `enum` constraint on recommendation `priority` in `responseSchema`, set default `geminiTimeoutMs` to `15000` (`15s`), propagated `AbortSignal` to `@google/genai`, added `retryCount`, and implemented 4-step live provider verification (`POST /api/brain/verify-provider`). | Verified live `GEMINI_SUCCESS` with `gemini-4-hydrogen` + 30-case matrix in `src/server/phase2.test.ts`. |
 | **CHG-V6-002** | **CLASS B (Controlled)** | `/src/server/db.ts`, `/src/server/backup.ts`, `/src/types/workspace.ts`, `/.vanta-data/backups/*.sha256.json`, `/package.json`, `/.env.example`, `/README.md` | V6 Sections 5 & 9: Checkpointed `.vanta-data/vanta.db-wal` into `.vanta-data/vanta.db` (`7` migrations, `13` provenance rows), added automatic passive WAL checkpointing after `initDatabase` and `brain_runs` inserts, enriched `BackupMetadata` with `backupType` and `schemaVersion`, repaired all backup `.sha256.json` manifests, tested isolated backup restoration, and updated `package.json` (`6.0.0`) and 37-section `README.md`. | `verifyBackupFile` across all 5 backups, isolated restore test, `npm test`, `compile_applet`, and `lint_applet`. |
+| **CHG-V7-001** | **CLASS B (Controlled)** | `/src/core/types.ts`, `/src/core/intelligence.ts`, `/src/server/db.ts`, `/src/server/routes.ts`, `/src/server/ai.ts`, `/src/components/*`, `/package-lock.json` | V7 Sections 3, 6 & 12: Added `validateProvenanceCombination` and `resolveCanonicalProvenance`, applied migration `008_repair_provenance_and_vision_classification` to repair all contradictory `(data_mode, evidence_class)` pairs in `evidence_provenance`, separated uploaded frame inspections (`OBSERVED`) from simulated sample buffers (`SIMULATED`), preserved 9-class provenance in VANTA Brain citations, and committed `package-lock.json`. | Unit tests in `intelligence.test.ts`, 31-case integration matrix in `phase2.test.ts`, `compile_applet`, and `lint_applet`. |
+| **CHG-V7-P2-001** | **CLASS B (Controlled)** | `/src/core/types.ts`, `/src/core/intelligence.ts`, `/src/server/ai.ts`, `/src/server/db.ts`, `/src/server/routes.ts`, `/src/components/*`, `/src/App.tsx` | V7 Phase 2: Added authoritative `countEvidenceByClassification` and `formatEvidenceClassificationSummary` so `MEASURED` never includes `OBSERVED`/`HUMAN_REPORTED`/`SYSTEM_RECORDED`; fixed `/api/vision/upload-inspect` to persist and return `mode: 'OBSERVED'`, `dataMode: 'OBSERVED'`, `evidenceClass: 'OBSERVED'`, `dataQualityStatus: 'PENDING_VERIFICATION'`; added migration `009_audit_provenance_data_quality_and_vision_mode`; added in-flight Brain query deduplication and HTTP disconnect abort handling; and wrapped main workspace content in `WorkspaceErrorBoundary`. | Unit tests in `intelligence.test.ts`, expanded integration tests in `phase2.test.ts`, `compile_applet`, `lint_applet`, and Playwright browser verification. |
 
 ---
 
-## 3. Database Schema & Migration Reference (`001`–`007`)
+## 3. Database Schema & Migration Reference (`001`–`009`)
 
 All migrations in `/src/server/db.ts` run inside `BEGIN ... COMMIT` transactions with automatic `ROLLBACK` on failure and are tracked in `schema_migrations`:
 
@@ -65,6 +67,11 @@ All migrations in `/src/server/db.ts` run inside `BEGIN ... COMMIT` transactions
 7. **`007_v4_brain_observability_and_provenance`**:
    - Added `correlation_id`, `execution_status`, `provider_status`, `failure_category`, `tool_results_json`, and `omitted_evidence_count` to `brain_runs`.
    - Backfilled genuine `evidence_provenance` rows from existing seeded `telemetry_points`, `vision_events`, `incidents`, `predictive_assessments`, and `root_cause_investigations`.
+8. **`008_repair_provenance_and_vision_classification`**:
+   - Repaired historical contradictory `(data_mode, evidence_class)` pairs in `evidence_provenance` so `data_mode` and `evidence_class` are 100% consistent across all 9 canonical provenance classes (`MEASURED`, `OBSERVED`, `HUMAN_REPORTED`, `SYSTEM_RECORDED`, `ESTIMATED`, `INFERRED`, `PREDICTED`, `SIMULATED`, `UNKNOWN`) without deleting historical records.
+9. **`009_audit_provenance_data_quality_and_vision_mode`**:
+   - Repaired `vision_events.mode` for `UPLOADED_IMAGE` captures from `'MEASURED'` to `'OBSERVED'`.
+   - Audited `evidence_provenance.data_quality_status` across `INCIDENTS`, `PREDICTIVE`, `RCA`, `VISION`, and `WORKFLOW` so `VERIFIED` is assigned only to direct physical sensor readings (`MEASURED`) and independently verified outcomes (`RESOLVED` incidents, `VERIFIED` RCA investigations, `VERIFIED` work orders), while unverified human reports, correlation hypotheses, heuristic RUL projections, and uploaded frames are marked `PENDING_VERIFICATION`, system dispatch logs are marked `VALIDATED`, and simulated records are marked `SIMULATED_SYNTHETIC`.
 
 ---
 
@@ -84,7 +91,7 @@ Every operational claim, telemetry sample, vision detection, incident escalation
 - **`relationshipType`** (7 canonical evidence links):
   - `SUPPORTS`, `CONTRADICTS`, `DERIVED_FROM`, `CORRELATES_WITH`, `VERIFIES`, `SUPERSEDES`, `REQUIRES_REVIEW`.
 - **`dataQualityStatus`**:
-  - `VERIFIED`, `STALE`, `DUPLICATE_DETECTED`, `OUT_OF_ORDER`, `SIMULATED_SYNTHETIC`.
+  - `VERIFIED`, `VALIDATED`, `PENDING_VERIFICATION`, `UNVERIFIED`, `STALE`, `DEGRADED`, `DUPLICATE_DETECTED`, `OUT_OF_ORDER`, `SIMULATED_SYNTHETIC`.
 
 ---
 

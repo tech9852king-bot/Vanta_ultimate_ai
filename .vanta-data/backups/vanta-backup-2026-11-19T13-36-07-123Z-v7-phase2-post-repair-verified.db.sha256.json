@@ -1,0 +1,10 @@
+{
+  "filename": "vanta-backup-2026-11-19T13-36-07-123Z-v7-phase2-post-repair-verified.db",
+  "filePath": ".vanta-data/backups/vanta-backup-2026-11-19T13-36-07-123Z-v7-phase2-post-repair-verified.db",
+  "sizeBytes": 327680,
+  "sha256": "fccc011f27ddba2d582c29f6c576c5dee23b34e96b7e71352db5bff19e83f7f6",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-19T13:36:07.129Z",
+  "backupType": "VACUUM_INTO",
+  "schemaVersion": "009_audit_provenance_data_quality_and_vision_mode"
+}

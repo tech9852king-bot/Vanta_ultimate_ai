@@ -7,12 +7,16 @@ import {
   computeNorthStarMetrics,
   computeZScoreAnomaly,
   correlateRootCauseEvidence,
+  countEvidenceByClassification,
   estimateRemainingUsefulLife,
   evaluatePredictiveBacktest,
   evaluateTelemetryQuality,
+  formatEvidenceClassificationSummary,
   getSectorProfile,
   requiresHumanApproval,
+  resolveCanonicalProvenance,
   simulateTwinCascade,
+  validateProvenanceCombination,
   validateWorkOrderTransition,
 } from './intelligence.ts';
 import type {
@@ -634,6 +638,164 @@ test('evaluateTelemetryQuality detects duplicates, out-of-order timestamps, stal
   assert.equal(kpi.ratios.verifiedOutcome.dataQuality, 'INSUFFICIENT_DATA');
   assert.equal(kpi.ratios.verifiedOutcome.drillDownSection, 'operations');
 });
+
+test('validateProvenanceCombination & resolveCanonicalProvenance reject contradictory combinations and enforce Section 3 invariants', () => {
+  // 1. Contradictory combinations explicitly forbidden by Section 3
+  assert.equal(validateProvenanceCombination('MEASURED', 'HUMAN_REPORTED', 'INCIDENTS').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'INFERRED', 'RCA').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'PREDICTED', 'PREDICTIVE').valid, false);
+  assert.equal(validateProvenanceCombination('SIMULATED', 'OBSERVED', 'VISION').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'OBSERVED', 'VISION').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'SYSTEM_RECORDED', 'WORKFLOW').valid, false);
+
+  // 2. Non-sensor modules cannot claim MEASURED even if both fields are MEASURED
+  assert.equal(validateProvenanceCombination('MEASURED', 'MEASURED', 'INCIDENTS').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'MEASURED', 'RCA').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'MEASURED', 'PREDICTIVE').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'MEASURED', 'VISION').valid, false);
+  assert.equal(validateProvenanceCombination('MEASURED', 'MEASURED', 'WORKFLOW').valid, false);
+
+  // 3. Valid canonical pairs pass validation
+  assert.equal(validateProvenanceCombination('MEASURED', 'MEASURED', 'IOT_TELEMETRY').valid, true);
+  assert.equal(validateProvenanceCombination('SIMULATED', 'SIMULATED', 'IOT_TELEMETRY').valid, true);
+  assert.equal(validateProvenanceCombination('SIMULATED', 'SIMULATED', 'VISION').valid, true);
+  assert.equal(validateProvenanceCombination('OBSERVED', 'OBSERVED', 'VISION').valid, true);
+  assert.equal(validateProvenanceCombination('HUMAN_REPORTED', 'HUMAN_REPORTED', 'INCIDENTS').valid, true);
+  assert.equal(validateProvenanceCombination('HUMAN_REPORTED', 'HUMAN_REPORTED', 'WORKFLOW').valid, true);
+  assert.equal(validateProvenanceCombination('SYSTEM_RECORDED', 'SYSTEM_RECORDED', 'WORKFLOW').valid, true);
+  assert.equal(validateProvenanceCombination('INFERRED', 'INFERRED', 'RCA').valid, true);
+  assert.equal(validateProvenanceCombination('PREDICTED', 'PREDICTED', 'PREDICTIVE').valid, true);
+  assert.equal(validateProvenanceCombination('ESTIMATED', 'ESTIMATED', 'ENERGY').valid, true);
+
+  // 4. resolveCanonicalProvenance maps legacy/mismatched inputs to consistent canonical pairs
+  const incResolved = resolveCanonicalProvenance({
+    sourceModule: 'INCIDENTS',
+    dataMode: 'MEASURED',
+    evidenceClass: 'HUMAN_REPORTED',
+  });
+  assert.equal(incResolved.dataMode, 'HUMAN_REPORTED');
+  assert.equal(incResolved.evidenceClass, 'HUMAN_REPORTED');
+
+  const rcaResolved = resolveCanonicalProvenance({
+    sourceModule: 'RCA',
+    dataMode: 'MEASURED',
+    evidenceClass: 'INFERRED',
+  });
+  assert.equal(rcaResolved.dataMode, 'INFERRED');
+  assert.equal(rcaResolved.evidenceClass, 'INFERRED');
+
+  const predResolved = resolveCanonicalProvenance({
+    sourceModule: 'PREDICTIVE',
+    dataMode: 'MEASURED',
+    evidenceClass: 'PREDICTED',
+  });
+  assert.equal(predResolved.dataMode, 'PREDICTED');
+  assert.equal(predResolved.evidenceClass, 'PREDICTED');
+
+  const visSampleResolved = resolveCanonicalProvenance({
+    sourceModule: 'VISION',
+    dataMode: 'SIMULATED',
+    evidenceClass: 'OBSERVED',
+  });
+  assert.equal(visSampleResolved.dataMode, 'SIMULATED');
+  assert.equal(visSampleResolved.evidenceClass, 'SIMULATED');
+
+  const visUploadResolved = resolveCanonicalProvenance({
+    sourceModule: 'VISION',
+    dataMode: 'MEASURED',
+    evidenceClass: 'OBSERVED',
+  });
+  assert.equal(visUploadResolved.dataMode, 'OBSERVED');
+  assert.equal(visUploadResolved.evidenceClass, 'OBSERVED');
+  assert.equal(visUploadResolved.dataQualityStatus, 'PENDING_VERIFICATION');
+
+  // 5. Phase 5 Data-Quality Status Governance: VERIFIED vs VALIDATED vs PENDING_VERIFICATION vs SIMULATED_SYNTHETIC
+  assert.equal(incResolved.dataQualityStatus, 'PENDING_VERIFICATION');
+  assert.equal(
+    resolveCanonicalProvenance({
+      sourceModule: 'INCIDENTS',
+      dataMode: 'HUMAN_REPORTED',
+      evidenceClass: 'HUMAN_REPORTED',
+      isIndependentlyVerified: true,
+    }).dataQualityStatus,
+    'VERIFIED'
+  );
+  assert.equal(rcaResolved.dataQualityStatus, 'PENDING_VERIFICATION');
+  assert.equal(predResolved.dataQualityStatus, 'PENDING_VERIFICATION');
+  assert.equal(visSampleResolved.dataQualityStatus, 'SIMULATED_SYNTHETIC');
+  assert.equal(
+    resolveCanonicalProvenance({
+      sourceModule: 'WORKFLOW',
+      dataMode: 'SYSTEM_RECORDED',
+      evidenceClass: 'SYSTEM_RECORDED',
+    }).dataQualityStatus,
+    'VALIDATED'
+  );
+  assert.equal(
+    resolveCanonicalProvenance({
+      sourceModule: 'IOT',
+      dataMode: 'MEASURED',
+      evidenceClass: 'MEASURED',
+    }).dataQualityStatus,
+    'VERIFIED'
+  );
+});
+
+test('countEvidenceByClassification & formatEvidenceClassificationSummary strictly separate all 9 categories and never conflate OBSERVED/HUMAN_REPORTED/SYSTEM_RECORDED into MEASURED', () => {
+  const emptyCounts = countEvidenceByClassification([]);
+  assert.deepEqual(emptyCounts, {
+    MEASURED: 0,
+    OBSERVED: 0,
+    HUMAN_REPORTED: 0,
+    SYSTEM_RECORDED: 0,
+    ESTIMATED: 0,
+    INFERRED: 0,
+    PREDICTED: 0,
+    SIMULATED: 0,
+    UNKNOWN: 0,
+  });
+
+  // Mixed evidence set across all 9 classifications
+  const mixedCounts = countEvidenceByClassification([
+    { evidenceClass: 'MEASURED', dataMode: 'MEASURED' },
+    { evidenceClass: 'MEASURED', dataMode: 'MEASURED' },
+    { evidenceClass: 'OBSERVED', dataMode: 'OBSERVED' },
+    { evidenceClass: 'HUMAN_REPORTED', dataMode: 'HUMAN_REPORTED' },
+    { evidenceClass: 'HUMAN_REPORTED', dataMode: 'HUMAN_REPORTED' },
+    { evidenceClass: 'HUMAN_REPORTED', dataMode: 'HUMAN_REPORTED' },
+    { evidenceClass: 'SYSTEM_RECORDED', dataMode: 'SYSTEM_RECORDED' },
+    { evidenceClass: 'ESTIMATED', dataMode: 'ESTIMATED' },
+    { evidenceClass: 'INFERRED', dataMode: 'INFERRED' },
+    { evidenceClass: 'PREDICTED', dataMode: 'PREDICTED' },
+    { evidenceClass: 'PREDICTED', dataMode: 'PREDICTED' },
+    { evidenceClass: 'SIMULATED', dataMode: 'SIMULATED' },
+    { evidenceClass: 'UNKNOWN', dataMode: 'UNKNOWN' },
+  ]);
+
+  // MEASURED must equal 2 (never 2 + 1 + 3 + 1 = 7!)
+  assert.equal(mixedCounts.MEASURED, 2);
+  assert.equal(mixedCounts.OBSERVED, 1);
+  assert.equal(mixedCounts.HUMAN_REPORTED, 3);
+  assert.equal(mixedCounts.SYSTEM_RECORDED, 1);
+  // ESTIMATED must equal 1 (never 1 + 1 + 2 = 4!)
+  assert.equal(mixedCounts.ESTIMATED, 1);
+  assert.equal(mixedCounts.INFERRED, 1);
+  assert.equal(mixedCounts.PREDICTED, 2);
+  assert.equal(mixedCounts.SIMULATED, 1);
+  assert.equal(mixedCounts.UNKNOWN, 1);
+
+  const summary = formatEvidenceClassificationSummary(mixedCounts);
+  assert.ok(summary.includes('MEASURED: 2'));
+  assert.ok(summary.includes('OBSERVED: 1'));
+  assert.ok(summary.includes('HUMAN_REPORTED: 3'));
+  assert.ok(summary.includes('SYSTEM_RECORDED: 1'));
+  assert.ok(summary.includes('ESTIMATED: 1'));
+  assert.ok(summary.includes('INFERRED: 1'));
+  assert.ok(summary.includes('PREDICTED: 2'));
+  assert.ok(summary.includes('SIMULATED: 1'));
+  assert.ok(summary.includes('UNKNOWN: 1'));
+});
+
 
 
 

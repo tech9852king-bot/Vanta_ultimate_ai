@@ -916,6 +916,145 @@ export function runSchemaMigrations(db: DatabaseSync): void {
       throw err;
     }
   }
+
+  if (!isApplied('008_repair_provenance_and_vision_classification')) {
+    db.exec('BEGIN');
+    try {
+      // Section 3 & Section 6: Repair contradictory (data_mode, evidence_class) provenance records
+      // without deleting historical provenance or converting non-measured records into MEASURED.
+      db.exec(`
+        UPDATE evidence_provenance
+        SET data_mode = 'HUMAN_REPORTED',
+            evidence_class = 'HUMAN_REPORTED',
+            data_quality_status = 'VERIFIED'
+        WHERE source_module = 'INCIDENTS';
+
+        UPDATE evidence_provenance
+        SET data_mode = CASE WHEN data_mode = 'SIMULATED' OR evidence_class = 'SIMULATED' THEN 'SIMULATED' ELSE 'PREDICTED' END,
+            evidence_class = CASE WHEN data_mode = 'SIMULATED' OR evidence_class = 'SIMULATED' THEN 'SIMULATED' ELSE 'PREDICTED' END,
+            data_quality_status = CASE WHEN data_mode = 'SIMULATED' OR evidence_class = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC' ELSE 'VERIFIED' END
+        WHERE source_module = 'PREDICTIVE';
+
+        UPDATE evidence_provenance
+        SET data_mode = 'INFERRED',
+            evidence_class = 'INFERRED',
+            data_quality_status = 'VERIFIED'
+        WHERE source_module IN ('RCA', 'ROOT_CAUSE');
+
+        UPDATE evidence_provenance
+        SET data_mode = CASE
+              WHEN processing_method LIKE '%UPLOADED_IMAGE%' THEN 'OBSERVED'
+              WHEN data_mode = 'SIMULATED' OR processing_method LIKE '%SAMPLE_IMAGE%' THEN 'SIMULATED'
+              ELSE 'OBSERVED'
+            END,
+            evidence_class = CASE
+              WHEN processing_method LIKE '%UPLOADED_IMAGE%' THEN 'OBSERVED'
+              WHEN data_mode = 'SIMULATED' OR processing_method LIKE '%SAMPLE_IMAGE%' THEN 'SIMULATED'
+              ELSE 'OBSERVED'
+            END,
+            data_quality_status = CASE
+              WHEN processing_method LIKE '%UPLOADED_IMAGE%' THEN 'VERIFIED'
+              WHEN data_mode = 'SIMULATED' OR processing_method LIKE '%SAMPLE_IMAGE%' THEN 'SIMULATED_SYNTHETIC'
+              ELSE 'VERIFIED'
+            END
+        WHERE source_module = 'VISION';
+
+        UPDATE evidence_provenance
+        SET data_mode = CASE
+              WHEN evidence_class = 'HUMAN_REPORTED' OR processing_method LIKE '%Verification%' THEN 'HUMAN_REPORTED'
+              ELSE 'SYSTEM_RECORDED'
+            END,
+            evidence_class = CASE
+              WHEN evidence_class = 'HUMAN_REPORTED' OR processing_method LIKE '%Verification%' THEN 'HUMAN_REPORTED'
+              ELSE 'SYSTEM_RECORDED'
+            END,
+            data_quality_status = 'VERIFIED'
+        WHERE source_module = 'WORKFLOW';
+      `);
+
+      markApplied(
+        '008_repair_provenance_and_vision_classification',
+        'Repair contradictory data_mode/evidence_class pairs in evidence_provenance across INCIDENTS, PREDICTIVE, RCA, VISION, and WORKFLOW'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  if (!isApplied('009_audit_provenance_data_quality_and_vision_mode')) {
+    db.exec('BEGIN');
+    try {
+      // Phase 4 & Phase 5: Align vision_events uploaded frame mode to OBSERVED and audit over-broad VERIFIED data_quality_status in evidence_provenance
+      db.exec(`
+        UPDATE vision_events
+        SET mode = 'OBSERVED'
+        WHERE capture_source = 'UPLOADED_IMAGE' AND mode = 'MEASURED';
+
+        UPDATE evidence_provenance
+        SET data_quality_status = CASE
+          WHEN EXISTS (
+            SELECT 1 FROM incidents i
+            WHERE i.id = evidence_provenance.source_record_id
+              AND i.status = 'RESOLVED'
+          ) THEN 'VERIFIED'
+          ELSE 'PENDING_VERIFICATION'
+        END
+        WHERE source_module = 'INCIDENTS';
+
+        UPDATE evidence_provenance
+        SET data_quality_status = CASE
+          WHEN data_mode = 'SIMULATED' OR evidence_class = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC'
+          ELSE 'PENDING_VERIFICATION'
+        END
+        WHERE source_module = 'PREDICTIVE';
+
+        UPDATE evidence_provenance
+        SET data_quality_status = CASE
+          WHEN EXISTS (
+            SELECT 1 FROM root_cause_investigations r
+            WHERE r.id = evidence_provenance.source_record_id
+              AND r.status = 'VERIFIED'
+          ) THEN 'VERIFIED'
+          ELSE 'PENDING_VERIFICATION'
+        END
+        WHERE source_module IN ('RCA', 'ROOT_CAUSE');
+
+        UPDATE evidence_provenance
+        SET data_quality_status = CASE
+          WHEN data_mode = 'SIMULATED' OR evidence_class = 'SIMULATED' OR processing_method LIKE '%SAMPLE_IMAGE%' THEN 'SIMULATED_SYNTHETIC'
+          ELSE 'PENDING_VERIFICATION'
+        END
+        WHERE source_module = 'VISION';
+
+        UPDATE evidence_provenance
+        SET data_quality_status = CASE
+          WHEN evidence_class = 'SYSTEM_RECORDED' THEN 'VALIDATED'
+          WHEN evidence_class = 'HUMAN_REPORTED' AND (
+            processing_method LIKE '%(VERIFIED%'
+            OR EXISTS (
+              SELECT 1 FROM work_orders w
+              WHERE w.id = evidence_provenance.source_record_id
+                AND w.verification_status = 'VERIFIED'
+                AND w.status = 'COMPLETED'
+            )
+          ) THEN 'VERIFIED'
+          ELSE 'PENDING_VERIFICATION'
+        END
+        WHERE source_module = 'WORKFLOW';
+      `);
+
+      markApplied(
+        '009_audit_provenance_data_quality_and_vision_mode',
+        'Audit evidence_provenance data_quality_status (VERIFIED vs VALIDATED vs PENDING_VERIFICATION vs SIMULATED_SYNTHETIC) and repair uploaded vision_events mode to OBSERVED'
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
 }
 
 function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
@@ -932,7 +1071,7 @@ function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
       t.asset_id,
       'IOT',
       t.id,
-      t.mode,
+      CASE WHEN t.mode = 'SIMULATED' THEN 'SIMULATED' ELSE 'MEASURED' END,
       CASE WHEN t.mode = 'SIMULATED' THEN 'SIMULATED' ELSE 'MEASURED' END,
       CASE WHEN t.mode = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC' ELSE 'VERIFIED' END,
       CASE WHEN t.is_anomaly = 1 THEN 'SUPPORTS' ELSE 'CORRELATES_WITH' END,
@@ -956,9 +1095,9 @@ function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
       v.asset_id,
       'VISION',
       v.id,
-      v.mode,
-      'OBSERVED',
-      CASE WHEN v.mode = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC' ELSE 'VERIFIED' END,
+      CASE WHEN v.capture_source = 'UPLOADED_IMAGE' THEN 'OBSERVED' WHEN v.mode = 'SIMULATED' OR v.capture_source = 'SAMPLE_IMAGE' THEN 'SIMULATED' ELSE 'OBSERVED' END,
+      CASE WHEN v.capture_source = 'UPLOADED_IMAGE' THEN 'OBSERVED' WHEN v.mode = 'SIMULATED' OR v.capture_source = 'SAMPLE_IMAGE' THEN 'SIMULATED' ELSE 'OBSERVED' END,
+      CASE WHEN v.capture_source = 'UPLOADED_IMAGE' THEN 'PENDING_VERIFICATION' WHEN v.mode = 'SIMULATED' OR v.capture_source = 'SAMPLE_IMAGE' THEN 'SIMULATED_SYNTHETIC' ELSE 'PENDING_VERIFICATION' END,
       'SUPPORTS',
       v.camera_id,
       v.inference_engine || ' (' || COALESCE(v.capture_source, 'SAMPLE_IMAGE') || ')',
@@ -980,9 +1119,9 @@ function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
       i.asset_id,
       'INCIDENTS',
       i.id,
-      'MEASURED',
       'HUMAN_REPORTED',
-      'VERIFIED',
+      'HUMAN_REPORTED',
+      CASE WHEN i.status = 'RESOLVED' THEN 'VERIFIED' ELSE 'PENDING_VERIFICATION' END,
       'REQUIRES_REVIEW',
       i.asset_id,
       'Operator Incident Escalation Record',
@@ -1004,9 +1143,9 @@ function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
       p.asset_id,
       'PREDICTIVE',
       p.id,
-      p.mode,
-      'PREDICTED',
-      'VERIFIED',
+      CASE WHEN p.mode = 'SIMULATED' THEN 'SIMULATED' ELSE 'PREDICTED' END,
+      CASE WHEN p.mode = 'SIMULATED' THEN 'SIMULATED' ELSE 'PREDICTED' END,
+      CASE WHEN p.mode = 'SIMULATED' THEN 'SIMULATED_SYNTHETIC' ELSE 'PENDING_VERIFICATION' END,
       'DERIVED_FROM',
       p.asset_id,
       p.methodology,
@@ -1028,9 +1167,9 @@ function backfillBaselineProvenanceFromExistingRecords(db: DatabaseSync): void {
       'ast-cnc-04',
       'RCA',
       r.id,
-      'MEASURED',
       'INFERRED',
-      'VERIFIED',
+      'INFERRED',
+      CASE WHEN r.status = 'VERIFIED' THEN 'VERIFIED' ELSE 'PENDING_VERIFICATION' END,
       'CORRELATES_WITH',
       r.incident_id,
       'Temporal + Directed Asset Dependency Graph Correlation',

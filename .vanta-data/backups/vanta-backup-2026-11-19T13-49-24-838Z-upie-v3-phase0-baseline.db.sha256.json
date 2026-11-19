@@ -1,0 +1,10 @@
+{
+  "filename": "vanta-backup-2026-11-19T13-49-24-838Z-upie-v3-phase0-baseline.db",
+  "filePath": "/app/applet/.vanta-data/backups/vanta-backup-2026-11-19T13-49-24-838Z-upie-v3-phase0-baseline.db",
+  "sizeBytes": 331776,
+  "sha256": "4e593f84f3c2e7b65c22ed503f0688e7d35fea4fd9776c71dd115e578663236f",
+  "integrityCheck": "ok",
+  "createdAt": "2026-11-19T13:49:24.844Z",
+  "backupType": "VACUUM_INTO",
+  "schemaVersion": "009_audit_provenance_data_quality_and_vision_mode"
+}

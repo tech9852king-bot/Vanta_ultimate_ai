@@ -21,6 +21,10 @@ import { loadRuntimeConfig } from './config.ts';
 import { initDatabase } from './db.ts';
 import { correlationMiddleware } from './observability.ts';
 import { createApiRouter } from './routes.ts';
+import {
+  countEvidenceByClassification,
+  validateProvenanceCombination,
+} from '../core/intelligence.ts';
 import { signSessionToken } from './security.ts';
 import { validateStructuredBrainOutput } from './validation.ts';
 
@@ -350,7 +354,7 @@ test('Phase II Hardware Honesty, Twin, Backtest, RCA & SSE Tickets: camera offli
     });
     assert.equal(inspectOffline.status, 409);
 
-    // 2. Uploaded frame inspection succeeds with UPLOADED_IMAGE / MEASURED captureSource
+    // 2. Uploaded frame inspection succeeds with UPLOADED_IMAGE / OBSERVED / PENDING_VERIFICATION provenance
     const tinyPngBase64 =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     const uploadInspect = await fetch(`${baseUrl}/vision/upload-inspect`, {
@@ -365,9 +369,23 @@ test('Phase II Hardware Honesty, Twin, Backtest, RCA & SSE Tickets: camera offli
       }),
     });
     assert.equal(uploadInspect.status, 201);
-    const uploadJson = (await uploadInspect.json()) as { captureSource: string; mode: string };
+    const uploadJson = (await uploadInspect.json()) as {
+      id: string;
+      captureSource: string;
+      mode: string;
+      dataMode: string;
+      evidenceClass: string;
+      dataQualityStatus: string;
+      cameraCapabilityState: string;
+      cameraStatus: string;
+    };
     assert.equal(uploadJson.captureSource, 'UPLOADED_IMAGE');
-    assert.equal(uploadJson.mode, 'MEASURED');
+    assert.equal(uploadJson.mode, 'OBSERVED');
+    assert.equal(uploadJson.dataMode, 'OBSERVED');
+    assert.equal(uploadJson.evidenceClass, 'OBSERVED');
+    assert.equal(uploadJson.dataQualityStatus, 'PENDING_VERIFICATION');
+    assert.equal(uploadJson.cameraCapabilityState, 'OFFLINE');
+    assert.equal(uploadJson.cameraStatus, 'OFFLINE');
 
     // 3. IoT unconfigured gateway rejects ingest (409) and simulated gateway enforces SIMULATED mode
     const probeIot = await fetch(`${baseUrl}/iot/connectors/iot-ws-1/health-check`, {
@@ -500,7 +518,7 @@ test('Phase II SQLite Hot Backup, SHA-256 Tamper Detection & Clean Restoration',
     const meta = createDatabaseBackup(db, backupDir, 'automated-test');
     assert.equal(meta.integrityCheck, 'ok');
     assert.equal(meta.backupType, 'VACUUM_INTO');
-    assert.equal(meta.schemaVersion, '007_v4_brain_observability_and_provenance');
+    assert.equal(meta.schemaVersion, '009_audit_provenance_data_quality_and_vision_mode');
     assert.ok(meta.sizeBytes > 4096);
 
     const verified = verifyBackupFile(meta.filePath);
@@ -710,7 +728,98 @@ test('Strategic Definition Closed-Loop: Priority Zero Work Order State Machine, 
     assert.equal(partialVerifyJson.status, 'NEEDS_FOLLOW_UP');
     assert.equal(partialVerifyJson.verificationStatus, 'PARTIAL');
 
-    // 10. Log incident & progress status
+    // 9b. Phase 6 Complete Work Order Lifecycle: UNRESOLVED outcome, REJECTED approval, and CANCELLED work order
+    const wo3Res = await fetch(`${baseUrl}/work-orders`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        facilityId: 'fac-plant-a',
+        assetId: 'ast-cnc-04',
+        title: 'Coolant Manifold Proportional Valve Calibration',
+        description: 'Calibrate proportional valve actuator hysteresis.',
+        priority: 'HIGH',
+      }),
+    });
+    const { workOrderId: wo3Id, approvalId: apr3Id } = (await wo3Res.json()) as { workOrderId: string; approvalId: string };
+    await fetch(`${baseUrl}/approvals/${apr3Id}/decide`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'APPROVED', notes: 'Approved for valve check.' }),
+    });
+    await fetch(`${baseUrl}/work-orders/${wo3Id}/execute`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ executionNotes: 'Recalibrated actuator zero point; valve stem binding persists.' }),
+    });
+    // Cannot cancel once IN_PROGRESS (409)
+    const illegalCancelInProgress = await fetch(`${baseUrl}/work-orders/${wo3Id}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Try to cancel after execution started' }),
+    });
+    assert.equal(illegalCancelInProgress.status, 409);
+
+    const unresolvedVerifyRes = await fetch(`${baseUrl}/work-orders/${wo3Id}/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        verificationStatus: 'UNRESOLVED',
+        verificationNotes: 'Valve stem mechanically seized; requires full manifold replacement.',
+      }),
+    });
+    assert.equal(unresolvedVerifyRes.status, 200);
+    const unresolvedVerifyJson = (await unresolvedVerifyRes.json()) as { status: string; verificationStatus: string };
+    assert.equal(unresolvedVerifyJson.status, 'UNRESOLVED');
+    assert.equal(unresolvedVerifyJson.verificationStatus, 'UNRESOLVED');
+
+    // Rejection flow: PENDING_APPROVAL -> REJECTED
+    const woRejectRes = await fetch(`${baseUrl}/work-orders`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        facilityId: 'fac-plant-a',
+        assetId: 'ast-chl-01',
+        title: 'Non-essential cosmetic panel repaint',
+        description: 'Repaint chiller side housing during peak shift.',
+        priority: 'LOW',
+      }),
+    });
+    const { workOrderId: woRejectId, approvalId: aprRejectId } = (await woRejectRes.json()) as {
+      workOrderId: string;
+      approvalId: string;
+    };
+    const rejectDecideRes = await fetch(`${baseUrl}/approvals/${aprRejectId}/decide`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'REJECTED', notes: 'Deferred to scheduled outage window.' }),
+    });
+    assert.equal(rejectDecideRes.status, 200);
+    const rejectedWoRow = db.prepare('SELECT status FROM work_orders WHERE id = ?').get(woRejectId) as { status: string };
+    assert.equal(rejectedWoRow.status, 'REJECTED');
+
+    // Cancellation flow: PENDING_APPROVAL -> CANCELLED
+    const woCancelRes = await fetch(`${baseUrl}/work-orders`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        facilityId: 'fac-plant-a',
+        assetId: 'ast-chl-01',
+        title: 'Duplicate gauge inspection',
+        description: 'Duplicate request to be cancelled.',
+        priority: 'LOW',
+      }),
+    });
+    const { workOrderId: woCancelId } = (await woCancelRes.json()) as { workOrderId: string };
+    const cancelRes = await fetch(`${baseUrl}/work-orders/${woCancelId}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Superseded by primary work order.' }),
+    });
+    assert.equal(cancelRes.status, 200);
+    const cancelledWoRow = db.prepare('SELECT status FROM work_orders WHERE id = ?').get(woCancelId) as { status: string };
+    assert.equal(cancelledWoRow.status, 'CANCELLED');
+
+    // 10. Log incident (starts PENDING_VERIFICATION) & progress status to RESOLVED (promotes provenance to VERIFIED)
     const incRes = await fetch(`${baseUrl}/incidents`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${ops.token}`, 'Content-Type': 'application/json' },
@@ -724,6 +833,10 @@ test('Strategic Definition Closed-Loop: Priority Zero Work Order State Machine, 
     });
     assert.equal(incRes.status, 201);
     const { id: incId } = (await incRes.json()) as { id: string };
+    const openIncProv = db
+      .prepare("SELECT data_quality_status FROM evidence_provenance WHERE source_module = 'INCIDENTS' AND source_record_id = ?")
+      .get(incId) as { data_quality_status: string };
+    assert.equal(openIncProv.data_quality_status, 'PENDING_VERIFICATION');
 
     const incPatch = await fetch(`${baseUrl}/incidents/${incId}`, {
       method: 'PATCH',
@@ -731,6 +844,10 @@ test('Strategic Definition Closed-Loop: Priority Zero Work Order State Machine, 
       body: JSON.stringify({ status: 'RESOLVED' }),
     });
     assert.equal(incPatch.status, 200);
+    const resolvedIncProv = db
+      .prepare("SELECT data_quality_status FROM evidence_provenance WHERE source_module = 'INCIDENTS' AND source_record_id = ?")
+      .get(incId) as { data_quality_status: string };
+    assert.equal(resolvedIncProv.data_quality_status, 'VERIFIED');
 
     // 11. Workspace includes provenanceRecords, verified work order, and NEEDS_FOLLOW_UP work order
     const ws = await fetch(`${baseUrl}/workspace?facilityId=fac-plant-a`, {
@@ -1411,6 +1528,112 @@ test('V4 Master Directive (Section 5 & Section 6): Complete 28-Case VANTA Brain 
     assert.equal(verifyLiveMock.geminiConfigured, true);
     assert.equal(verifyLiveMock.steps.length, 4);
     assert.ok(verifyLiveMock.steps.every((s) => s.status === 'PASSED'));
+
+    // Case 31 (V7 Section 3 & Section 6): Verify Migration 008 & Zero Contradictory Provenance Combinations
+    const allProvRows = db
+      .prepare('SELECT id, source_module, data_mode, evidence_class, summary FROM evidence_provenance')
+      .all() as Array<{
+      id: string;
+      source_module: string;
+      data_mode: string;
+      evidence_class: string;
+      summary: string;
+    }>;
+    assert.ok(allProvRows.length >= 13);
+    for (const row of allProvRows) {
+      const check = validateProvenanceCombination(row.data_mode, row.evidence_class, row.source_module);
+      assert.equal(
+        check.valid,
+        true,
+        `Provenance row ${row.id} (${row.source_module}) has invalid combination (${row.data_mode}, ${row.evidence_class}): ${check.reason}`
+      );
+      assert.equal(row.data_mode, row.evidence_class);
+    }
+
+    // Verify specific baseline records match Section 3 & Phase 5 (Migration 009) requirements
+    const allProvWithQuality = db
+      .prepare('SELECT id, source_module, data_mode, evidence_class, data_quality_status, summary FROM evidence_provenance')
+      .all() as Array<{
+      id: string;
+      source_module: string;
+      data_mode: string;
+      evidence_class: string;
+      data_quality_status: string;
+      summary: string;
+    }>;
+    const byId = new Map(allProvWithQuality.map((r) => [r.id, r]));
+    assert.equal(byId.get('prv-inc-1038')?.data_mode, 'HUMAN_REPORTED');
+    assert.equal(byId.get('prv-inc-1038')?.evidence_class, 'HUMAN_REPORTED');
+    assert.equal(byId.get('prv-inc-1038')?.data_quality_status, 'PENDING_VERIFICATION'); // inc-1038 is OPEN
+    assert.equal(byId.get('prv-inc-1042')?.data_mode, 'HUMAN_REPORTED');
+    assert.equal(byId.get('prv-inc-1042')?.evidence_class, 'HUMAN_REPORTED');
+    assert.equal(byId.get('prv-inc-1042')?.data_quality_status, 'PENDING_VERIFICATION'); // inc-1042 is INVESTIGATING
+    assert.equal(byId.get('prv-inc-med-1')?.data_mode, 'HUMAN_REPORTED');
+    assert.equal(byId.get('prv-inc-med-1')?.evidence_class, 'HUMAN_REPORTED');
+    assert.equal(byId.get('prv-inc-med-1')?.data_quality_status, 'VERIFIED'); // inc-med-1 is RESOLVED
+    assert.equal(byId.get('prv-prd-1')?.data_mode, 'PREDICTED');
+    assert.equal(byId.get('prv-prd-1')?.evidence_class, 'PREDICTED');
+    assert.equal(byId.get('prv-prd-1')?.data_quality_status, 'PENDING_VERIFICATION'); // Heuristic RUL prediction
+    assert.equal(byId.get('prv-prd-2')?.data_mode, 'PREDICTED');
+    assert.equal(byId.get('prv-prd-2')?.evidence_class, 'PREDICTED');
+    assert.equal(byId.get('prv-prd-2')?.data_quality_status, 'PENDING_VERIFICATION');
+    assert.equal(byId.get('prv-rca-1042')?.data_mode, 'INFERRED');
+    assert.equal(byId.get('prv-rca-1042')?.evidence_class, 'INFERRED');
+    assert.equal(byId.get('prv-rca-1042')?.data_quality_status, 'PENDING_VERIFICATION'); // rca-1042 is OPEN
+    assert.equal(byId.get('prv-vis-evt-1')?.data_mode, 'SIMULATED');
+    assert.equal(byId.get('prv-vis-evt-1')?.evidence_class, 'SIMULATED');
+    assert.equal(byId.get('prv-vis-evt-1')?.data_quality_status, 'SIMULATED_SYNTHETIC');
+    assert.equal(byId.get('prv-tel-chl-6')?.data_mode, 'MEASURED');
+    assert.equal(byId.get('prv-tel-chl-6')?.evidence_class, 'MEASURED');
+    assert.equal(byId.get('prv-tel-chl-6')?.data_quality_status, 'VERIFIED');
+
+    // Case 32 (V7 Phase 2 — Phase 3): Verify 9-category evidenceBreakdown in VANTA Brain never conflates OBSERVED/HUMAN_REPORTED/SYSTEM_RECORDED into MEASURED
+    const mixedBrainFacts = [
+      { claim: 'Measured sensor reading', sourceId: 'tel-chl-6', module: 'IOT_TELEMETRY', evidenceClass: 'MEASURED' as const, dataMode: 'MEASURED' as const },
+      { claim: 'Observed uploaded frame', sourceId: 'vis-up-1', module: 'VISION', evidenceClass: 'OBSERVED' as const, dataMode: 'OBSERVED' as const },
+      { claim: 'Human incident report', sourceId: 'inc-1042', module: 'INCIDENTS', evidenceClass: 'HUMAN_REPORTED' as const, dataMode: 'HUMAN_REPORTED' as const },
+      { claim: 'System dispatch log', sourceId: 'wo-401', module: 'WORKFLOW', evidenceClass: 'SYSTEM_RECORDED' as const, dataMode: 'SYSTEM_RECORDED' as const },
+      { claim: 'Estimated energy profile', sourceId: 'eng-4', module: 'ENERGY', evidenceClass: 'ESTIMATED' as const, dataMode: 'ESTIMATED' as const },
+      { claim: 'Inferred RCA hypothesis', sourceId: 'rca-1042', module: 'ROOT_CAUSE', evidenceClass: 'INFERRED' as const, dataMode: 'INFERRED' as const },
+      { claim: 'Predicted RUL headroom', sourceId: 'prd-1', module: 'PREDICTIVE', evidenceClass: 'PREDICTED' as const, dataMode: 'PREDICTED' as const },
+      { claim: 'Simulated telemetry', sourceId: 'tel-dc-4', module: 'IOT_TELEMETRY', evidenceClass: 'SIMULATED' as const, dataMode: 'SIMULATED' as const },
+    ];
+    const mixedStrength = computeHeuristicEvidenceStrength(mixedBrainFacts, []);
+    assert.equal(mixedStrength.evidenceBreakdown.MEASURED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.OBSERVED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.HUMAN_REPORTED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.SYSTEM_RECORDED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.ESTIMATED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.INFERRED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.PREDICTED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.SIMULATED, 1);
+    assert.equal(mixedStrength.evidenceBreakdown.UNKNOWN, 0);
+    assert.deepEqual(mixedStrength.evidenceBreakdown, countEvidenceByClassification(mixedBrainFacts));
+
+    // Case 33 (V7 Phase 2 — Phase 2): In-flight Brain query deduplication coalesces identical concurrent requests
+    let concurrentProviderCalls = 0;
+    const [dedupA, dedupB] = await Promise.all([
+      runVantaBrainQuery(db, opsSession, 'Concurrent dedup test query', 'fac-plant-a', {
+        config: configuredCfg,
+        geminiGenerateContent: async () => {
+          concurrentProviderCalls++;
+          await new Promise((r) => setTimeout(r, 40));
+          return { text: JSON.stringify(validMockGeminiPayload) };
+        },
+      }),
+      runVantaBrainQuery(db, opsSession, 'Concurrent dedup test query', 'fac-plant-a', {
+        config: configuredCfg,
+        geminiGenerateContent: async () => {
+          concurrentProviderCalls++;
+          await new Promise((r) => setTimeout(r, 40));
+          return { text: JSON.stringify(validMockGeminiPayload) };
+        },
+      }),
+    ]);
+    assert.equal(concurrentProviderCalls, 1);
+    assert.equal(dedupA.executionStatus, 'GEMINI_SUCCESS');
+    assert.equal(dedupB.executionStatus, 'GEMINI_SUCCESS');
+    assert.ok(dedupA.evidenceBreakdown);
   } finally {
     server.close();
   }

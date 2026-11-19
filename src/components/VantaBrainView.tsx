@@ -11,6 +11,10 @@ import {
   Clock,
 } from 'lucide-react';
 import { vantaApi } from '../api/client';
+import {
+  countEvidenceByClassification,
+  VALID_EVIDENCE_CLASSIFICATIONS,
+} from '../core/intelligence';
 import type {
   BrainAnalysisResponse,
   GeminiProviderVerificationReport,
@@ -281,20 +285,41 @@ export function VantaBrainView({
               </div>
 
               {/* Heuristic Evidence Strength & Data Freshness Disclosure */}
-              <div className="p-3 rounded-md bg-[#0B0F17] border border-[#1E293B] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
-                <div>
-                  <span className="font-mono text-[11px] text-emerald-400 font-semibold">
-                    EVIDENCE STRENGTH: {res.confidence ?? 50}/100 ({res.confidenceLabel || 'MODERATE_EVIDENCE_CORROBORATION'})
-                  </span>
-                  <div className="text-[11px] text-slate-400 mt-0.5">
-                    {res.confidenceMethodology || 'Heuristic Evidence-Strength Indicator (not a calibrated statistical probability).'}
+              {(() => {
+                const breakdown = res.evidenceBreakdown || countEvidenceByClassification(res.verifiedFacts);
+                return (
+                  <div className="p-3 rounded-md bg-[#0B0F17] border border-[#1E293B] space-y-2 text-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div>
+                        <span className="font-mono text-[11px] text-emerald-400 font-semibold">
+                          EVIDENCE STRENGTH: {res.confidence ?? 50}/100 ({res.confidenceLabel || 'MODERATE_EVIDENCE_CORROBORATION'})
+                        </span>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          {res.confidenceMethodology || 'Heuristic Evidence-Strength Indicator (not a calibrated statistical probability).'}
+                        </div>
+                      </div>
+                      <div className="font-mono text-[11px] text-slate-400 shrink-0">
+                        {res.dataFreshnessSummary}
+                        {res.omittedEvidenceCount ? ` · OMITTED_FOR_BUDGET: ${res.omittedEvidenceCount}` : ''}
+                      </div>
+                    </div>
+                    <div
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-2 border-t border-[#1E293B] font-mono text-[11px] text-slate-400"
+                      data-testid="brain-evidence-breakdown"
+                    >
+                      <span className="text-slate-500">9-CLASS BREAKDOWN:</span>
+                      {VALID_EVIDENCE_CLASSIFICATIONS.map((cls) => (
+                        <span
+                          key={cls}
+                          className={breakdown[cls] > 0 ? 'text-slate-200' : 'text-slate-600'}
+                        >
+                          {cls}: {breakdown[cls] ?? 0}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <div className="font-mono text-[11px] text-slate-400 shrink-0">
-                  {res.dataFreshnessSummary}
-                  {res.omittedEvidenceCount ? ` · OMITTED_FOR_BUDGET: ${res.omittedEvidenceCount}` : ''}
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Per-Tool Execution Diagnostics */}
               {res.toolResults && res.toolResults.length > 0 && (
@@ -401,7 +426,9 @@ export function VantaBrainView({
                           <div className="font-mono text-[11px] text-slate-400 mt-0.5 flex flex-wrap gap-2">
                             <span>Source: {fact.sourceId}</span>
                             <span>· {fact.module}</span>
-                            {fact.dataMode && <span>· Mode: {fact.dataMode}</span>}
+                            {(fact.evidenceClass || fact.dataMode) && (
+                              <span>· Class: {fact.evidenceClass || fact.dataMode}</span>
+                            )}
                           </div>
                         </li>
                       ))}

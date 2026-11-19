@@ -793,7 +793,9 @@ export function SecurityGovernanceView({
             <thead>
               <tr className="border-b border-[#1E293B] text-xs text-slate-400">
                 <th className="py-3 px-4">Module</th>
-                <th className="py-3 px-4">Data Mode</th>
+                <th className="py-3 px-4">Data Origin</th>
+                <th className="py-3 px-4">Evidence Class</th>
+                <th className="py-3 px-4">Data Quality</th>
                 <th className="py-3 px-4">Processing Method</th>
                 <th className="py-3 px-4">Summary</th>
                 <th className="py-3 px-4">Timestamp</th>
@@ -804,6 +806,8 @@ export function SecurityGovernanceView({
                 <tr key={p.id} className="hover:bg-[#161E2E]/60">
                   <td className="py-2.5 px-4 font-mono text-sky-300">{p.sourceModule}</td>
                   <td className="py-2.5 px-4"><StatusText value={p.dataMode} /></td>
+                  <td className="py-2.5 px-4"><StatusText value={p.evidenceClass || p.dataMode} /></td>
+                  <td className="py-2.5 px-4"><StatusText value={p.dataQualityStatus || 'PENDING_VERIFICATION'} /></td>
                   <td className="py-2.5 px-4 text-slate-300">{p.processingMethod}</td>
                   <td className="py-2.5 px-4 text-slate-400">{p.summary}</td>
                   <td className="py-2.5 px-4 font-mono text-slate-500 whitespace-nowrap">
@@ -1028,19 +1032,26 @@ export function AdministrationView({
 }
 
 const CAPABILITY_MATRIX: Array<{ module: string; state: CapabilityState; notes: string }> = [
-  { module: '01 · Core Intelligence & Universal Data Model', state: 'FUNCTIONAL', notes: 'SQLite WAL persistence, versioned migrations, tenant/facility isolation, provenance ledger' },
-  { module: '02 · VANTA Brain', state: 'FUNCTIONAL', notes: '10-stage server Gemini 4 Hydrogen tool-calling + server citation validator + deterministic fallback' },
-  { module: '03 · Vision Intelligence', state: 'PARTIALLY_FUNCTIONAL', notes: 'Uploaded JPEG/PNG/WebP inspection + sample frames; offline RTSP cameras refuse live inspection honestly' },
-  { module: '04 · Industrial IoT & Telemetry', state: 'SIMULATED', notes: 'Normalized ingestion & z-score engine live; simulated LAN gateways vs OFFLINE external brokers' },
-  { module: '05 · Asset Intelligence', state: 'FUNCTIONAL', notes: 'Full asset registry, metadata, and directed graph edges' },
-  { module: '06 · Digital Twin', state: 'PARTIALLY_FUNCTIONAL', notes: '2D spatial topology, persisted Twin snapshots, and read-only cascade simulator; 3D BIM PLANNED' },
-  { module: '07 · Predictive Maintenance', state: 'FUNCTIONAL', notes: 'Deterministic headroom RUL + uncertainty + sliding-window precision/recall/F1 backtesting' },
-  { module: '08 · Energy Intelligence', state: 'FUNCTIONAL', notes: 'Separates MEASURED, ESTIMATED, and SIMULATED kWh with facility/equipment attribution' },
-  { module: '09 · Root Cause Intelligence', state: 'FUNCTIONAL', notes: 'Temporal precedence causal correlation dossiers + selectionReason + human verification' },
-  { module: '10 · Multi-Agent Orchestration', state: 'FUNCTIONAL', notes: '12 scoped agents with step trace, conflict detection, idempotency & physical safety lock' },
-  { module: '11 · Knowledge Intelligence', state: 'FUNCTIONAL', notes: 'Role-scoped, facility-scoped, tenant-isolated technical documentation repository' },
-  { module: '12 · Operations Center & Workflows', state: 'FUNCTIONAL', notes: 'Work order drafting, approval queue, and single-use ticket SSE live telemetry stream' },
-  { module: '14 · Security & Governance', state: 'FUNCTIONAL', notes: 'Fail-closed secrets, key rotation, session revocation, layered rate limits & VACUUM INTO backups' },
+  { module: '01 · Overview / Executive Intelligence', state: 'FUNCTIONAL', notes: 'Live SQLite WAL metrics, North Star KPI formulas, data origin distribution & provenance ledger' },
+  { module: '02 · Command Center', state: 'FUNCTIONAL', notes: 'Facility health matrix, cross-facility alert stream, and single-use ticket SSE live telemetry feed' },
+  { module: '03 · VANTA Brain', state: 'FUNCTIONAL', notes: '13-stage server Gemini 4 Hydrogen synthesis + 4-step live provider check + citation validator + deterministic fallback' },
+  { module: '04 · Vision Intelligence', state: 'PARTIALLY_FUNCTIONAL', notes: 'Uploaded JPEG/PNG/WebP multimodal inspection (OBSERVED / PENDING_VERIFICATION) + sample frames (SIMULATED); offline RTSP fails closed (409)' },
+  { module: '05 · Cameras & Feeds', state: 'PARTIALLY_FUNCTIONAL', notes: 'Camera inventory, capability states (SAMPLE_IMAGE, OFFLINE), privacy policies, and live provider health probes' },
+  { module: '06 · Infrastructure Hierarchy', state: 'FUNCTIONAL', notes: 'Canonical Organization → Site → Facility → Building → Floor → Zone → Asset → Sensor hierarchy' },
+  { module: '07 · Asset Intelligence (Asset 360°)', state: 'FUNCTIONAL', notes: 'Full asset registry, Asset 360° inspector, upstream/downstream dependency edges, and RBAC asset registration' },
+  { module: '08 · Industrial IoT & Sensors', state: 'SIMULATED', notes: '10-stage connector lifecycle, 2s duplicate telemetry guard & z-score anomaly engine live; .internal plant brokers simulated' },
+  { module: '09 · Digital Twin', state: 'PARTIALLY_FUNCTIONAL', notes: '2D dependency topology, persisted versioned Twin snapshots, and read-only BFS cascade simulator (SIMULATED)' },
+  { module: '10 · Predictive Maintenance', state: 'FUNCTIONAL', notes: 'Deterministic headroom RUL (±uncertaintyHours) + sliding-window precision/recall/F1 anomaly backtesting' },
+  { module: '11 · Energy Intelligence', state: 'FUNCTIONAL', notes: 'Strictly separates MEASURED revenue meters, ESTIMATED duty cycles, and SIMULATED profiles with facility attribution' },
+  { module: '12 · Root Cause Intelligence', state: 'FUNCTIONAL', notes: 'Temporal precedence & dependency graph correlation dossiers + epistemic causation boundary + human verification' },
+  { module: '13 · Multi-Agent Orchestrator', state: 'FUNCTIONAL', notes: '12 bounded agents with tool allowlists, step trace, conflict detection, idempotency keys & physical safety lock' },
+  { module: '14 · Operations Workflows & Work Orders', state: 'FUNCTIONAL', notes: 'Closed-loop CREATED → PENDING_APPROVAL → APPROVED → IN_PROGRESS → VERIFICATION_PENDING → COMPLETED/NEEDS_FOLLOW_UP/UNRESOLVED' },
+  { module: '15 · Knowledge Center', state: 'FUNCTIONAL', notes: 'Role-scoped (minRole), facility-scoped, tenant-isolated SOPs and engineering knowledge repository' },
+  { module: '16 · Security & Governance', state: 'FUNCTIONAL', notes: 'Scrypt auth, SQLite session JTI revocation, RBAC matrix, immutable audit log, and 9-category provenance taxonomy' },
+  { module: '17 · Analytics & Reporting', state: 'FUNCTIONAL', notes: 'Formula-disclosed North Star ratios, facility anomaly rankings, and 8-sector industry template applicability' },
+  { module: '18 · Integrations & Connectors', state: 'SIMULATED', notes: '10-stage protocol adapter matrix (OPC UA, MQTT, Modbus, BACnet, ONVIF, REST, WebSocket) with fail-closed credential checks' },
+  { module: '19 · Administration', state: 'FUNCTIONAL', notes: 'Tenant organization metadata, 8-sector operating envelope profiles, and RBAC-protected tenant user directory' },
+  { module: '20 · System Health', state: 'FUNCTIONAL', notes: 'Live API/DB/Gemini telemetry, correlation-tracked latency histograms, and VACUUM INTO SQLite backups with SHA-256 verification' },
 ];
 
 export function SystemHealthView({
@@ -1139,7 +1150,7 @@ export function SystemHealthView({
           <div className="text-slate-400">API Runtime</div>
           <div className="mt-1"><StatusText value={currentHealth?.status || 'OFFLINE'} /></div>
           <div className="font-mono text-[11px] text-slate-400 mt-1">
-            Migrations: {currentHealth?.migrationsApplied ?? 3} applied
+            Migrations: {currentHealth?.migrationsApplied ?? 9} applied
           </div>
         </div>
         <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-4">

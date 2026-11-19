@@ -10,10 +10,14 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { GoogleGenAI, ThinkingLevel, Type, type FunctionDeclaration } from '@google/genai';
 import {
-   canPerformAction,
+  canPerformAction,
   computeEnergySummary,
+  countEvidenceByClassification,
+  formatEvidenceClassificationSummary,
+  resolveCanonicalProvenance,
   type PermissionAction,
 } from '../core/intelligence.ts';
+export { countEvidenceByClassification, formatEvidenceClassificationSummary };
 import type {
   AgentTraceStep,
   BrainAnalysisResponse,
@@ -22,6 +26,7 @@ import type {
   BrainToolExecutionResult,
   CameraCapabilityState,
   DataOriginMode,
+  EvidenceClassification,
   GeminiProviderVerificationReport,
   GeminiProviderVerificationStep,
   SeverityLevel,
@@ -301,32 +306,39 @@ export function computeHeuristicEvidenceStrength(
   confidence: number;
   confidenceLabel: 'HIGH_EVIDENCE_CORROBORATION' | 'MODERATE_EVIDENCE_CORROBORATION' | 'LIMITED_EVIDENCE';
   confidenceMethodology: string;
+  evidenceBreakdown: Record<EvidenceClassification, number>;
 } {
   const completedTools = toolResults.filter((t) => t.status === 'COMPLETED').length;
   const failedTools = toolResults.filter((t) => t.status !== 'COMPLETED').length;
-  const measuredCount = verifiedFacts.filter((f) => f.dataMode === 'MEASURED').length;
-  const estimatedCount = verifiedFacts.filter((f) => f.dataMode === 'ESTIMATED').length;
-  const simulatedCount = verifiedFacts.filter((f) => f.dataMode === 'SIMULATED').length;
+  const counts = countEvidenceByClassification(verifiedFacts);
 
   let score = 40;
-  score += Math.min(28, measuredCount * 10);
-  score += Math.min(14, estimatedCount * 6);
-  score += Math.min(12, simulatedCount * 4);
+  score += Math.min(28, counts.MEASURED * 10);
+  score += Math.min(14, counts.OBSERVED * 7);
+  score += Math.min(12, counts.SYSTEM_RECORDED * 6);
+  score += Math.min(10, counts.HUMAN_REPORTED * 5);
+  score += Math.min(10, counts.ESTIMATED * 5);
+  score += Math.min(10, counts.INFERRED * 5);
+  score += Math.min(10, counts.PREDICTED * 5);
+  score += Math.min(8, counts.SIMULATED * 3);
   score += Math.min(10, completedTools * 2);
   score -= failedTools * 12;
 
   const boundedScore = Math.max(20, Math.min(94, Math.round(score)));
   const confidenceLabel: 'HIGH_EVIDENCE_CORROBORATION' | 'MODERATE_EVIDENCE_CORROBORATION' | 'LIMITED_EVIDENCE' =
-    boundedScore >= 78 && measuredCount > 0 && failedTools === 0
+    boundedScore >= 78 && counts.MEASURED > 0 && failedTools === 0
       ? 'HIGH_EVIDENCE_CORROBORATION'
       : boundedScore >= 55 && verifiedFacts.length > 0
       ? 'MODERATE_EVIDENCE_CORROBORATION'
       : 'LIMITED_EVIDENCE';
 
+  const summaryStr = formatEvidenceClassificationSummary(counts);
+
   return {
     confidence: boundedScore,
     confidenceLabel,
-    confidenceMethodology: `Heuristic Evidence-Strength Indicator (not a calibrated statistical probability): ${verifiedFacts.length} server-verified citation(s) (${measuredCount} MEASURED, ${estimatedCount} ESTIMATED, ${simulatedCount} SIMULATED) across ${completedTools}/${toolResults.length} completed tool queries.`,
+    confidenceMethodology: `Heuristic Evidence-Strength Indicator (not a calibrated statistical probability): ${verifiedFacts.length} server-verified citation(s) (${summaryStr}) across ${completedTools}/${toolResults.length} completed tool queries.`,
+    evidenceBreakdown: counts,
   };
 }
 
@@ -346,7 +358,8 @@ export interface EvidenceIndexEntry {
   id: string;
   module: string;
   facilityId: string | null;
-  dataMode: DataOriginMode;
+  dataMode: DataOriginMode | EvidenceClassification;
+  evidenceClass?: EvidenceClassification;
 }
 
 export type BrainIntent =
@@ -410,20 +423,41 @@ function indexRows(
   evidenceIndex: Map<string, EvidenceIndexEntry>,
   rows: Array<Record<string, unknown>>,
   module: string,
-  defaultMode: DataOriginMode = 'MEASURED'
+  defaultMode: DataOriginMode | EvidenceClassification = 'MEASURED'
 ) {
   for (const r of rows) {
     if (!r.id) continue;
     const rawMode = String(r.mode || r.data_mode || defaultMode);
-    const dataMode: DataOriginMode =
-      rawMode === 'MEASURED' || rawMode === 'ESTIMATED' || rawMode === 'SIMULATED'
-        ? rawMode
-        : defaultMode;
+    const captureSource = r.capture_source ? String(r.capture_source) : null;
+    let resolvedClass: EvidenceClassification;
+
+    if (module === 'INCIDENTS' || module === 'MAINTENANCE') {
+      resolvedClass = 'HUMAN_REPORTED';
+    } else if (module === 'WORK_ORDERS' || module === 'ASSET_GRAPH' || module === 'KNOWLEDGE' || module === 'SECURITY_AUDIT') {
+      resolvedClass = 'SYSTEM_RECORDED';
+    } else if (module === 'PREDICTIVE') {
+      resolvedClass = rawMode === 'SIMULATED' ? 'SIMULATED' : 'PREDICTED';
+    } else if (module === 'VISION') {
+      resolvedClass = resolveCanonicalProvenance({
+        sourceModule: 'VISION',
+        dataMode: rawMode,
+        captureSource,
+      }).evidenceClass;
+    } else if (module === 'IOT_INTEGRATIONS') {
+      resolvedClass = 'SIMULATED';
+    } else {
+      resolvedClass =
+        rawMode === 'MEASURED' || rawMode === 'ESTIMATED' || rawMode === 'SIMULATED'
+          ? rawMode
+          : (defaultMode as EvidenceClassification);
+    }
+
     evidenceIndex.set(String(r.id), {
       id: String(r.id),
       module,
       facilityId: r.facility_id ? String(r.facility_id) : null,
-      dataMode,
+      dataMode: resolvedClass,
+      evidenceClass: resolvedClass,
     });
   }
 }
@@ -725,16 +759,21 @@ export function validateBrainCitations(
       continue;
     }
 
+    const resolvedClass: EvidenceClassification =
+      entry.evidenceClass || (entry.dataMode as EvidenceClassification) || 'MEASURED';
+
     const modePrefix =
-      entry.dataMode !== 'MEASURED' && !fact.claim.toUpperCase().includes(entry.dataMode)
-        ? `[${entry.dataMode}] `
+      (resolvedClass === 'SIMULATED' || resolvedClass === 'ESTIMATED') &&
+      !fact.claim.toUpperCase().includes(resolvedClass)
+        ? `[${resolvedClass}] `
         : '';
 
     verifiedFacts.push({
       claim: `${modePrefix}${fact.claim}`,
       sourceId: entry.id,
       module: entry.module || fact.module,
-      dataMode: entry.dataMode,
+      dataMode: resolvedClass,
+      evidenceClass: resolvedClass,
       facilityId: entry.facilityId,
     });
   }
@@ -934,7 +973,10 @@ export interface BrainQueryOptions {
   maxEvidenceBytes?: number;
   retryBaseDelayMs?: number;
   totalDeadlineMs?: number;
+  deduplicateInFlight?: boolean;
 }
+
+const inFlightBrainQueries = new Map<string, Promise<BrainAnalysisResponse>>();
 
 function buildDeterministicBrainFallbackFromGathered(params: {
   query: string;
@@ -1069,9 +1111,7 @@ function buildDeterministicBrainFallbackFromGathered(params: {
   ];
 
   const evidenceStrength = computeHeuristicEvidenceStrength(verifiedFacts, toolResults);
-  const measuredCount = verifiedFacts.filter((f) => f.dataMode === 'MEASURED').length;
-  const estimatedCount = verifiedFacts.filter((f) => f.dataMode === 'ESTIMATED').length;
-  const simulatedCount = verifiedFacts.filter((f) => f.dataMode === 'SIMULATED').length;
+  const evidenceBreakdown = evidenceStrength.evidenceBreakdown;
 
   const unknowns: string[] = [
     'Manual operator changeover logs and un-instrumented mechanical valve positions are not directly observed in telemetry.',
@@ -1139,7 +1179,8 @@ function buildDeterministicBrainFallbackFromGathered(params: {
     toolsCalled: plannedTools,
     toolResults,
     omittedEvidenceCount,
-    dataFreshnessSummary: `Evidence breakdown: ${measuredCount} MEASURED, ${estimatedCount} ESTIMATED, ${simulatedCount} SIMULATED citation(s).`,
+    evidenceBreakdown,
+    dataFreshnessSummary: `Evidence breakdown: ${formatEvidenceClassificationSummary(evidenceBreakdown)}.`,
     engineUsed: 'DETERMINISTIC_CORE_FALLBACK',
     modelId: 'deterministic-core-v2',
     uncertaintyNote: reason
@@ -1150,6 +1191,37 @@ function buildDeterministicBrainFallbackFromGathered(params: {
 }
 
 export async function runVantaBrainQuery(
+  db: DatabaseSync,
+  session: UserSession,
+  query: string,
+  facilityId?: string,
+  options?: BrainQueryOptions
+): Promise<BrainAnalysisResponse> {
+  const shouldDeduplicate =
+    options?.deduplicateInFlight === true ||
+    (options?.deduplicateInFlight !== false && !options?.toolOverrides);
+
+  if (shouldDeduplicate) {
+    const dedupKey = `${session.tenantId}:${session.id}:${facilityId || 'ALL'}:${query.trim().toLowerCase()}`;
+    const existing = inFlightBrainQueries.get(dedupKey);
+    if (existing) {
+      return existing.then((sharedResult) => ({
+        ...sharedResult,
+        executionId: options?.executionId || sharedResult.executionId,
+        correlationId: options?.correlationId || sharedResult.correlationId,
+      }));
+    }
+    const promise = executeVantaBrainQueryInternal(db, session, query, facilityId, options).finally(() => {
+      inFlightBrainQueries.delete(dedupKey);
+    });
+    inFlightBrainQueries.set(dedupKey, promise);
+    return promise;
+  }
+
+  return executeVantaBrainQueryInternal(db, session, query, facilityId, options);
+}
+
+async function executeVantaBrainQueryInternal(
   db: DatabaseSync,
   session: UserSession,
   query: string,
@@ -1463,9 +1535,7 @@ Produce a strictly grounded, concise JSON analysis (2–4 items per array). Ever
           : '';
 
       const uniqueTools = Array.from(new Set(toolsCalled));
-      const measuredCount = verifiedFacts.filter((f) => f.dataMode === 'MEASURED').length;
-      const estimatedCount = verifiedFacts.filter((f) => f.dataMode === 'ESTIMATED').length;
-      const simulatedCount = verifiedFacts.filter((f) => f.dataMode === 'SIMULATED').length;
+      const evidenceBreakdown = evidenceStrength.evidenceBreakdown;
 
       return {
         executionId,
@@ -1512,7 +1582,8 @@ Produce a strictly grounded, concise JSON analysis (2–4 items per array). Ever
         toolResults,
         omittedEvidenceCount,
         retryCount,
-        dataFreshnessSummary: `Evidence breakdown: ${measuredCount} MEASURED, ${estimatedCount} ESTIMATED, ${simulatedCount} SIMULATED citation(s).`,
+        evidenceBreakdown,
+        dataFreshnessSummary: `Evidence breakdown: ${formatEvidenceClassificationSummary(evidenceBreakdown)}.`,
         engineUsed: 'GEMINI_4_HYDROGEN',
         modelId: cfg.geminiModelId,
         latencyMs,
@@ -1766,8 +1837,9 @@ export async function runVisionFrameInspection(
   }
 
   if (ai && imageBase64) {
+    const visionController = new AbortController();
     try {
-      const response = await withTimeout(
+      const response = await withTimeoutAndAbort(
         ai.models.generateContent({
           model: MODEL_NAME,
           contents: {
@@ -1814,9 +1886,12 @@ Rules:
               },
               required: ['summary', 'severity', 'overallConfidence', 'detections'],
             },
+            abortSignal: visionController.signal,
           },
         }),
-        7000
+        7000,
+        undefined,
+        visionController
       );
 
       const parsed = JSON.parse((response.text || '{}').trim()) as {

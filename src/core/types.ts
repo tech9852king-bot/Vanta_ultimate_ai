@@ -284,7 +284,7 @@ export interface VisionEvent {
   summary: string;
   detections: VisionDetection[];
   inferenceEngine: 'GEMINI_MULTIMODAL' | 'RULE_BASED_EDGE';
-  mode: DataOriginMode;
+  mode: DataOriginMode | 'OBSERVED';
   captureSource?: 'SAMPLE_IMAGE' | 'UPLOADED_IMAGE' | 'SIMULATED_BUFFER';
   evidenceImageUrl: string;
   createdAt: string;
@@ -327,6 +327,17 @@ export interface TelemetryPoint {
   timestamp: string;
 }
 
+export type ProvenanceDataQualityStatus =
+  | 'VERIFIED'
+  | 'VALIDATED'
+  | 'PENDING_VERIFICATION'
+  | 'UNVERIFIED'
+  | 'STALE'
+  | 'DEGRADED'
+  | 'DUPLICATE_DETECTED'
+  | 'OUT_OF_ORDER'
+  | 'SIMULATED_SYNTHETIC';
+
 export interface EvidenceProvenanceRecord {
   id: string;
   sourceModule: string;
@@ -337,9 +348,9 @@ export interface EvidenceProvenanceRecord {
   ingestionTimestamp?: string;
   observationWindow?: string | null;
   unit?: string | null;
-  dataMode: DataOriginMode;
+  dataMode: DataOriginMode | EvidenceClassification;
   evidenceClass?: EvidenceClassification;
-  dataQualityStatus?: 'VERIFIED' | 'VALIDATED' | 'UNVERIFIED' | 'STALE' | 'DEGRADED';
+  dataQualityStatus?: ProvenanceDataQualityStatus;
   relationshipType?: EvidenceRelationType | null;
   parentEvidenceId?: string | null;
   processingMethod: string;
@@ -741,7 +752,7 @@ export interface BrainAnalysisResponse {
     claim: string;
     sourceId: string;
     module: string;
-    dataMode?: DataOriginMode;
+    dataMode?: DataOriginMode | EvidenceClassification;
     evidenceClass?: EvidenceClassification;
     facilityId?: string | null;
   }>;
@@ -773,6 +784,7 @@ export interface BrainAnalysisResponse {
   toolResults?: BrainToolExecutionResult[];
   omittedEvidenceCount?: number;
   retryCount?: number;
+  evidenceBreakdown?: Record<EvidenceClassification, number>;
   dataFreshnessSummary?: string;
   engineUsed: 'GEMINI_4_HYDROGEN' | 'DETERMINISTIC_CORE_FALLBACK';
   executionStatus?: BrainExecutionStatus;

@@ -443,14 +443,29 @@ export function AnalyticsReportsView({ data }: { data: WorkspaceData }) {
     energyRecords: data.energyRecords,
   });
 
+  const escapeCsvCell = (raw: string | number): string => {
+    const str = String(raw ?? '');
+    const safeFormula = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+    return `"${safeFormula.replace(/"/g, '""')}"`;
+  };
+
   const exportCsv = () => {
     const headers = ['AssetCode', 'AssetName', 'Type', 'Status', 'HealthScore', 'DataMode'];
-    const rows = data.assets.map((a) => [a.code, `"${a.name}"`, a.assetType, a.status, a.healthScore, a.dataMode].join(','));
+    const rows = data.assets.map((a) =>
+      [
+        escapeCsvCell(a.code),
+        escapeCsvCell(a.name),
+        escapeCsvCell(a.assetType),
+        escapeCsvCell(a.status),
+        a.healthScore,
+        escapeCsvCell(a.dataMode),
+      ].join(',')
+    );
     const blob = new Blob([[headers.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `vanta-analytics-${data.organization.tenantId}.csv`;
+    link.download = `vanta-analytics-${data.organization?.tenantId || 'workspace'}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };

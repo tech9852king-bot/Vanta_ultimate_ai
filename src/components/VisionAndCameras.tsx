@@ -102,7 +102,7 @@ export function VisionIntelligenceView({
         base64Data,
         filename: file.name,
       });
-      setNotice(`Uploaded frame "${file.name}" inspected and persisted with MEASURED / UPLOADED_IMAGE provenance.`);
+      setNotice(`Uploaded frame "${file.name}" inspected and persisted with OBSERVED / UPLOADED_IMAGE provenance (PENDING_VERIFICATION).`);
       onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Uploaded image inspection failed.');

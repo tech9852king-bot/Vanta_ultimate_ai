@@ -9,7 +9,9 @@ import type {
   AssetRelationship,
   AssetStatus,
   Camera,
+  DataOriginMode,
   EnergyRecord,
+  EvidenceClassification,
   Incident,
   InfrastructureEvent,
   IoTIntegration,
@@ -18,6 +20,7 @@ import type {
   NorthStarMetrics,
   PredictiveAssessment,
   PredictiveBacktestResult,
+  ProvenanceDataQualityStatus,
   RootCauseInvestigation,
   SectorConfigurationProfile,
   SeverityLevel,
@@ -740,11 +743,13 @@ export function computeLifecycleStages(input: {
 
   const measuredTelemetry = input.telemetry.filter((t) => t.mode === 'MEASURED').length;
   const simulatedTelemetry = input.telemetry.length - measuredTelemetry;
-  const measuredVision = input.visionEvents.filter((v) => v.mode === 'MEASURED').length;
-  const simulatedVision = input.visionEvents.length - measuredVision;
+  const nonSimulatedVision = input.visionEvents.filter(
+    (v) => v.mode === 'MEASURED' || v.mode === 'OBSERVED'
+  ).length;
+  const simulatedVision = input.visionEvents.length - nonSimulatedVision;
 
   const collectedSignals = input.telemetry.length + input.visionEvents.length;
-  const measuredSignals = measuredTelemetry + measuredVision;
+  const measuredSignals = measuredTelemetry + nonSimulatedVision;
   const simulatedSignals = simulatedTelemetry + simulatedVision;
 
   const measuredAssets = input.assets.filter((a) => a.dataMode === 'MEASURED').length;
@@ -825,7 +830,7 @@ export function computeLifecycleStages(input: {
       summary: `${input.telemetry.length} telemetry · ${input.visionEvents.length} vision captures`,
       evidence: [
         `${measuredTelemetry} MEASURED telemetry points, ${simulatedTelemetry} SIMULATED/ESTIMATED`,
-        `${measuredVision} MEASURED vision inspections, ${simulatedVision} SIMULATED`,
+        `${nonSimulatedVision} OBSERVED/MEASURED vision inspections, ${simulatedVision} SIMULATED`,
       ],
       blockers: collectedSignals === 0 ? ['No telemetry or vision samples ingested in current scope'] : [],
       lastUpdatedAt: latestIso([
@@ -1546,5 +1551,259 @@ export function getSectorProfile(industry: string): SectorConfigurationProfile {
     sector: industry || SECTOR_PROFILES[0].sector,
   };
 }
+
+export const VALID_EVIDENCE_CLASSIFICATIONS: readonly EvidenceClassification[] = [
+  'MEASURED',
+  'OBSERVED',
+  'HUMAN_REPORTED',
+  'SYSTEM_RECORDED',
+  'ESTIMATED',
+  'INFERRED',
+  'PREDICTED',
+  'SIMULATED',
+  'UNKNOWN',
+] as const;
+
+const MODULE_ALLOWED_PROVENANCE: Record<string, readonly EvidenceClassification[]> = {
+  IOT: ['MEASURED', 'ESTIMATED', 'SIMULATED'],
+  IOT_TELEMETRY: ['MEASURED', 'ESTIMATED', 'SIMULATED'],
+  TELEMETRY: ['MEASURED', 'ESTIMATED', 'SIMULATED'],
+  ENERGY: ['MEASURED', 'ESTIMATED', 'SIMULATED'],
+  VISION: ['OBSERVED', 'SIMULATED'],
+  INCIDENTS: ['HUMAN_REPORTED'],
+  WORKFLOW: ['SYSTEM_RECORDED', 'HUMAN_REPORTED'],
+  PREDICTIVE: ['PREDICTED', 'SIMULATED'],
+  RCA: ['INFERRED'],
+  ROOT_CAUSE: ['INFERRED'],
+  DIGITAL_TWIN: ['SYSTEM_RECORDED', 'SIMULATED'],
+  KNOWLEDGE: ['SYSTEM_RECORDED'],
+};
+
+/**
+ * Centralized Provenance Validator (Section 3 Critical Priority).
+ * Rejects contradictory (dataMode, evidenceClass) combinations such as:
+ * - MEASURED + HUMAN_REPORTED
+ * - MEASURED + INFERRED
+ * - MEASURED + PREDICTED
+ * - MEASURED + OBSERVED
+ * - SIMULATED + OBSERVED
+ * and enforces module-level conceptual origin rules.
+ */
+export function validateProvenanceCombination(
+  inputOrDataMode:
+    | {
+        sourceModule: string;
+        dataMode: string;
+        evidenceClass: string;
+      }
+    | string,
+  evidenceClassArg?: string,
+  sourceModuleArg?: string
+): { valid: boolean; reason?: string } {
+  const rawInput =
+    typeof inputOrDataMode === 'string'
+      ? {
+          dataMode: inputOrDataMode,
+          evidenceClass: evidenceClassArg || '',
+          sourceModule: sourceModuleArg || '',
+        }
+      : inputOrDataMode;
+
+  const mod = (rawInput.sourceModule || '').trim().toUpperCase();
+  const mode = (rawInput.dataMode || '').trim().toUpperCase() as EvidenceClassification;
+  const cls = (rawInput.evidenceClass || '').trim().toUpperCase() as EvidenceClassification;
+
+  if (!VALID_EVIDENCE_CLASSIFICATIONS.includes(mode)) {
+    return { valid: false, reason: `Invalid provenance dataMode '${rawInput.dataMode}'.` };
+  }
+  if (!VALID_EVIDENCE_CLASSIFICATIONS.includes(cls)) {
+    return { valid: false, reason: `Invalid provenance evidenceClass '${rawInput.evidenceClass}'.` };
+  }
+  if (mode !== cls) {
+    return {
+      valid: false,
+      reason: `Contradictory provenance combination '${mode} + ${cls}' for module '${mod}': dataMode and evidenceClass must match.`,
+    };
+  }
+
+  const allowedForModule = MODULE_ALLOWED_PROVENANCE[mod];
+  if (allowedForModule && !allowedForModule.includes(cls)) {
+    return {
+      valid: false,
+      reason: `Invalid provenance classification '${cls}' for sourceModule '${mod}'. Allowed: ${allowedForModule.join(', ')}.`,
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Phase 3: Authoritative 9-Category Evidence Classification Counter.
+ * - Counts each of the 9 classifications separately:
+ *   MEASURED, OBSERVED, HUMAN_REPORTED, SYSTEM_RECORDED, ESTIMATED, INFERRED, PREDICTED, SIMULATED, UNKNOWN.
+ * - MEASURED counts ONLY MEASURED evidence (never OBSERVED, HUMAN_REPORTED, or SYSTEM_RECORDED).
+ * - ESTIMATED counts ONLY ESTIMATED evidence (never INFERRED or PREDICTED).
+ */
+export function countEvidenceByClassification(
+  facts: Array<{
+    dataMode?: DataOriginMode | EvidenceClassification | string | null;
+    evidenceClass?: EvidenceClassification | string | null;
+  }>
+): Record<EvidenceClassification, number> {
+  const counts: Record<EvidenceClassification, number> = {
+    MEASURED: 0,
+    OBSERVED: 0,
+    HUMAN_REPORTED: 0,
+    SYSTEM_RECORDED: 0,
+    ESTIMATED: 0,
+    INFERRED: 0,
+    PREDICTED: 0,
+    SIMULATED: 0,
+    UNKNOWN: 0,
+  };
+
+  for (const fact of facts) {
+    const raw = (fact.evidenceClass || fact.dataMode || 'UNKNOWN').toString().trim().toUpperCase();
+    if ((VALID_EVIDENCE_CLASSIFICATIONS as readonly string[]).includes(raw)) {
+      counts[raw as EvidenceClassification] += 1;
+    } else {
+      counts.UNKNOWN += 1;
+    }
+  }
+
+  return counts;
+}
+
+/**
+ * Formats a compact, transparent summary of all 9 evidence classifications.
+ * Always includes MEASURED, OBSERVED, HUMAN_REPORTED, SYSTEM_RECORDED, ESTIMATED, INFERRED, PREDICTED, SIMULATED, and any non-zero UNKNOWN.
+ */
+export function formatEvidenceClassificationSummary(
+  counts: Record<EvidenceClassification, number>
+): string {
+  const parts = [
+    `MEASURED: ${counts.MEASURED}`,
+    `OBSERVED: ${counts.OBSERVED}`,
+    `HUMAN_REPORTED: ${counts.HUMAN_REPORTED}`,
+    `SYSTEM_RECORDED: ${counts.SYSTEM_RECORDED}`,
+    `ESTIMATED: ${counts.ESTIMATED}`,
+    `INFERRED: ${counts.INFERRED}`,
+    `PREDICTED: ${counts.PREDICTED}`,
+    `SIMULATED: ${counts.SIMULATED}`,
+  ];
+  if (counts.UNKNOWN > 0) {
+    parts.push(`UNKNOWN: ${counts.UNKNOWN}`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Centralized Provenance Resolver (Section 3 & Phase 5 Critical Priority).
+ * Maps a record creation context to a validated (dataMode, evidenceClass, dataQualityStatus) tuple.
+ * Classification and independent verification quality are distinct:
+ * - Direct physical sensor readings (MEASURED) and independently verified human/RCA/workflow records are VERIFIED.
+ * - Logged system records (SYSTEM_RECORDED) default to VALIDATED unless independently verified.
+ * - Unverified incident reports, uploaded camera frames, heuristic RUL predictions, and open RCA correlations default to PENDING_VERIFICATION unless independently verified.
+ * - Simulated records are always SIMULATED_SYNTHETIC.
+ */
+export function resolveCanonicalProvenance(input: {
+  sourceModule: string;
+  dataMode?: string | null;
+  evidenceClass?: EvidenceClassification | null;
+  captureSource?: string | null;
+  processingMethod?: string | null;
+  isIndependentlyVerified?: boolean;
+  dataQualityStatus?: ProvenanceDataQualityStatus | null;
+}): {
+  dataMode: EvidenceClassification;
+  evidenceClass: EvidenceClassification;
+  dataQualityStatus: ProvenanceDataQualityStatus;
+} {
+  const mod = (input.sourceModule || '').trim().toUpperCase();
+  const rawMode = (input.dataMode || '').trim().toUpperCase();
+  const rawClass = (input.evidenceClass || '').trim().toUpperCase() as EvidenceClassification;
+  const method = (input.processingMethod || '').toLowerCase();
+  const capture = (input.captureSource || '').toUpperCase();
+
+  let canonical: EvidenceClassification;
+
+  if (mod === 'INCIDENTS') {
+    canonical = 'HUMAN_REPORTED';
+  } else if (mod === 'RCA' || mod === 'ROOT_CAUSE') {
+    canonical = 'INFERRED';
+  } else if (mod === 'PREDICTIVE') {
+    canonical = rawMode === 'SIMULATED' || rawClass === 'SIMULATED' ? 'SIMULATED' : 'PREDICTED';
+  } else if (mod === 'VISION') {
+    if (
+      capture === 'UPLOADED_IMAGE' ||
+      method.includes('uploaded_image') ||
+      (rawClass === 'OBSERVED' && rawMode !== 'SIMULATED' && !method.includes('sample_image'))
+    ) {
+      canonical = 'OBSERVED';
+    } else if (
+      rawMode === 'SIMULATED' ||
+      rawClass === 'SIMULATED' ||
+      capture === 'SAMPLE_IMAGE' ||
+      method.includes('sample_image')
+    ) {
+      canonical = 'SIMULATED';
+    } else {
+      canonical = 'OBSERVED';
+    }
+  } else if (mod === 'WORKFLOW') {
+    if (rawClass === 'HUMAN_REPORTED' || method.includes('verification')) {
+      canonical = 'HUMAN_REPORTED';
+    } else {
+      canonical = 'SYSTEM_RECORDED';
+    }
+  } else if (mod === 'DIGITAL_TWIN') {
+    canonical = rawMode === 'SIMULATED' || rawClass === 'SIMULATED' ? 'SIMULATED' : 'SYSTEM_RECORDED';
+  } else if (mod === 'IOT' || mod === 'IOT_TELEMETRY' || mod === 'TELEMETRY' || mod === 'ENERGY') {
+    if (rawMode === 'SIMULATED' || rawClass === 'SIMULATED') {
+      canonical = 'SIMULATED';
+    } else if (rawMode === 'ESTIMATED' || rawClass === 'ESTIMATED') {
+      canonical = 'ESTIMATED';
+    } else {
+      canonical = 'MEASURED';
+    }
+  } else if (VALID_EVIDENCE_CLASSIFICATIONS.includes(rawClass)) {
+    canonical = rawClass;
+  } else if (VALID_EVIDENCE_CLASSIFICATIONS.includes(rawMode as EvidenceClassification)) {
+    canonical = rawMode as EvidenceClassification;
+  } else {
+    canonical = 'UNKNOWN';
+  }
+
+  let dataQualityStatus: ProvenanceDataQualityStatus;
+  if (canonical === 'SIMULATED') {
+    dataQualityStatus = 'SIMULATED_SYNTHETIC';
+  } else if (
+    input.dataQualityStatus &&
+    input.dataQualityStatus !== 'SIMULATED_SYNTHETIC' &&
+    (input.dataQualityStatus !== 'VERIFIED' ||
+      canonical === 'MEASURED' ||
+      input.isIndependentlyVerified === true)
+  ) {
+    dataQualityStatus = input.dataQualityStatus;
+  } else if (canonical === 'MEASURED') {
+    dataQualityStatus = 'VERIFIED';
+  } else if (input.isIndependentlyVerified === true) {
+    dataQualityStatus = 'VERIFIED';
+  } else if (canonical === 'SYSTEM_RECORDED') {
+    dataQualityStatus = 'VALIDATED';
+  } else if (canonical === 'UNKNOWN') {
+    dataQualityStatus = 'UNVERIFIED';
+  } else {
+    dataQualityStatus = 'PENDING_VERIFICATION';
+  }
+
+  return {
+    dataMode: canonical,
+    evidenceClass: canonical,
+    dataQualityStatus,
+  };
+}
+
+
 
 

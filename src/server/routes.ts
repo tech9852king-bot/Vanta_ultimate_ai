@@ -15,7 +15,9 @@ import {
   correlateRootCauseEvidence,
   estimateRemainingUsefulLife,
   evaluatePredictiveBacktest,
+  resolveCanonicalProvenance,
   simulateTwinCascade,
+  validateProvenanceCombination,
   validateWorkOrderTransition,
 } from '../core/intelligence.ts';
 import type {
@@ -28,6 +30,7 @@ import type {
   Incident,
   InfrastructureEvent,
   MaintenanceRecord,
+  ProvenanceDataQualityStatus,
   TelemetryPoint,
   UserSession,
   VantaRole,
@@ -159,27 +162,31 @@ export function createApiRouter(
     sourceRecordId: string;
     dataMode: string;
     evidenceClass?: EvidenceClassification;
-    dataQualityStatus?: 'VERIFIED' | 'STALE' | 'DUPLICATE_DETECTED' | 'OUT_OF_ORDER' | 'SIMULATED_SYNTHETIC';
+    dataQualityStatus?: ProvenanceDataQualityStatus;
+    isIndependentlyVerified?: boolean;
     relationshipType?: EvidenceRelationType | null;
     parentEvidenceId?: string | null;
     processingMethod: string;
     modelVersion?: string | null;
     summary: string;
   }) => {
-    const inferredClass: EvidenceClassification =
-      params.evidenceClass ||
-      (params.dataMode === 'SIMULATED'
-        ? 'SIMULATED'
-        : params.dataMode === 'ESTIMATED'
-        ? 'ESTIMATED'
-        : params.sourceModule === 'INCIDENTS'
-        ? 'HUMAN_REPORTED'
-        : params.sourceModule === 'VISION'
-        ? 'OBSERVED'
-        : 'MEASURED');
-    const qualityStatus =
-      params.dataQualityStatus ||
-      (params.dataMode === 'SIMULATED' ? 'SIMULATED_SYNTHETIC' : 'VERIFIED');
+    const resolved = resolveCanonicalProvenance({
+      sourceModule: params.sourceModule,
+      dataMode: params.dataMode,
+      evidenceClass: params.evidenceClass || null,
+      processingMethod: params.processingMethod,
+      isIndependentlyVerified: params.isIndependentlyVerified,
+      dataQualityStatus: params.dataQualityStatus || null,
+    });
+    const validation = validateProvenanceCombination({
+      sourceModule: params.sourceModule,
+      dataMode: resolved.dataMode,
+      evidenceClass: resolved.evidenceClass,
+    });
+    if (!validation.valid) {
+      throw new Error(validation.reason || 'Invalid provenance combination.');
+    }
+    const qualityStatus = params.dataQualityStatus || resolved.dataQualityStatus;
 
     db.prepare(`
       INSERT INTO evidence_provenance (id, tenant_id, facility_id, asset_id, source_module, source_record_id, data_mode, evidence_class, data_quality_status, relationship_type, parent_evidence_id, processing_method, model_version, summary, created_at)
@@ -191,8 +198,8 @@ export function createApiRouter(
       params.assetId,
       params.sourceModule,
       params.sourceRecordId,
-      params.dataMode,
-      inferredClass,
+      resolved.dataMode,
+      resolved.evidenceClass,
       qualityStatus,
       params.relationshipType || null,
       params.parentEvidenceId || null,
@@ -1055,10 +1062,21 @@ export function createApiRouter(
 
       const execId = uid('brn');
       const correlationId = (req as CorrelatedRequest).correlationId || uid('cor');
+      const reqAbortController = new AbortController();
+      const onClientDisconnect = () => {
+        if (!res.writableEnded) {
+          reqAbortController.abort(new Error('Client HTTP connection closed before VANTA Brain completion'));
+        }
+      };
+      res.on('close', onClientDisconnect);
+
       const result = await runVantaBrainQuery(db, req.auth!, query, facilityId, {
         executionId: execId,
         correlationId,
         config: cfg,
+        signal: reqAbortController.signal,
+      }).finally(() => {
+        res.off('close', onClientDisconnect);
       });
 
       db.prepare(`
@@ -1222,6 +1240,12 @@ export function createApiRouter(
       sourceModule: 'VISION',
       sourceRecordId: evtId,
       dataMode: cam.mode,
+      evidenceClass: cam.mode === 'SIMULATED' ? 'SIMULATED' : 'OBSERVED',
+      dataQualityStatus: cam.mode === 'SIMULATED' ? 'SIMULATED_SYNTHETIC' : 'PENDING_VERIFICATION',
+      isIndependentlyVerified: false,
+      relationshipType:
+        inspection.severity === 'CRITICAL' || inspection.severity === 'HIGH' ? 'REQUIRES_REVIEW' : 'SUPPORTS',
+      parentEvidenceId: cam.asset_id,
       processingMethod: `${inspection.inferenceEngine} (${inspection.captureSource})`,
       modelVersion: cfg.geminiModelId,
       summary: inspection.summary,
@@ -1235,6 +1259,9 @@ export function createApiRouter(
       assetId: cam.asset_id,
       ...inspection,
       mode: cam.mode,
+      dataMode: cam.mode,
+      evidenceClass: cam.mode === 'SIMULATED' ? 'SIMULATED' : 'OBSERVED',
+      dataQualityStatus: cam.mode === 'SIMULATED' ? 'SIMULATED_SYNTHETIC' : 'PENDING_VERIFICATION',
       evidenceImageUrl: cam.sample_image_url,
       createdAt: now,
     });
@@ -1248,7 +1275,7 @@ export function createApiRouter(
     const { cameraId, goal, mimeType, base64Data, filename } = validated.data;
 
     const cam = db
-      .prepare('SELECT id, facility_id, zone_id, asset_id, name, confidence_threshold, sample_image_url FROM cameras WHERE id = ? AND tenant_id = ?')
+      .prepare('SELECT id, facility_id, zone_id, asset_id, name, confidence_threshold, sample_image_url, capability_state, status FROM cameras WHERE id = ? AND tenant_id = ?')
       .get(cameraId, req.auth!.tenantId) as
       | {
           id: string;
@@ -1258,6 +1285,8 @@ export function createApiRouter(
           name: string;
           confidence_threshold: number;
           sample_image_url: string;
+          capability_state: 'LIVE' | 'SIMULATED' | 'SAMPLE_IMAGE' | 'OFFLINE' | 'DEGRADED' | 'NOT_CONFIGURED';
+          status: 'ONLINE' | 'DEGRADED' | 'OFFLINE';
         }
       | undefined;
 
@@ -1275,8 +1304,8 @@ export function createApiRouter(
         sampleImageUrl: cam.sample_image_url,
         confidenceThreshold: cam.confidence_threshold,
         zoneId: cam.zone_id,
-        capabilityState: 'LIVE',
-        status: 'ONLINE',
+        capabilityState: cam.capability_state,
+        status: cam.status,
       },
       goal,
       { mimeType, base64Data }
@@ -1286,7 +1315,7 @@ export function createApiRouter(
     const now = new Date().toISOString();
     db.prepare(`
       INSERT INTO vision_events (id, tenant_id, camera_id, facility_id, asset_id, event_type, severity, confidence, summary, detections_json, inference_engine, mode, capture_source, evidence_image_url, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MEASURED', 'UPLOADED_IMAGE', ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OBSERVED', 'UPLOADED_IMAGE', ?, ?)
     `).run(
       evtId,
       req.auth!.tenantId,
@@ -1309,7 +1338,13 @@ export function createApiRouter(
       assetId: cam.asset_id,
       sourceModule: 'VISION',
       sourceRecordId: evtId,
-      dataMode: 'MEASURED',
+      dataMode: 'OBSERVED',
+      evidenceClass: 'OBSERVED',
+      dataQualityStatus: 'PENDING_VERIFICATION',
+      isIndependentlyVerified: false,
+      relationshipType:
+        inspection.severity === 'CRITICAL' || inspection.severity === 'HIGH' ? 'REQUIRES_REVIEW' : 'SUPPORTS',
+      parentEvidenceId: cam.asset_id,
       processingMethod: `${inspection.inferenceEngine} (UPLOADED_IMAGE: ${filename})`,
       modelVersion: cfg.geminiModelId,
       summary: inspection.summary,
@@ -1322,8 +1357,13 @@ export function createApiRouter(
       facilityId: cam.facility_id,
       assetId: cam.asset_id,
       ...inspection,
-      mode: 'MEASURED',
+      mode: 'OBSERVED',
+      dataMode: 'OBSERVED',
+      evidenceClass: 'OBSERVED',
+      dataQualityStatus: 'PENDING_VERIFICATION',
       captureSource: 'UPLOADED_IMAGE',
+      cameraCapabilityState: cam.capability_state,
+      cameraStatus: cam.status,
       createdAt: now,
     });
   });
@@ -1825,6 +1865,22 @@ export function createApiRouter(
       now
     );
 
+    recordProvenance({
+      tenantId,
+      facilityId: inc.facilityId,
+      assetId: inc.assetId,
+      sourceModule: 'RCA',
+      sourceRecordId: rcaId,
+      dataMode: 'INFERRED',
+      evidenceClass: 'INFERRED',
+      dataQualityStatus: 'PENDING_VERIFICATION',
+      isIndependentlyVerified: false,
+      relationshipType: 'CORRELATES_WITH',
+      parentEvidenceId: inc.id,
+      processingMethod: 'Temporal Precedence & Asset Dependency Graph Correlation (Not Proof of Physical Causation)',
+      summary: `${inc.title}: ${result.potentialCauses[0]?.cause || 'Root-cause correlation generated'} (confidence ${Math.round(result.confidence * 100)}%)`,
+    });
+
     logAudit(tenantId, req.auth!.email, req.auth!.role, 'RCA_GENERATED', 'ROOT_CAUSE', rcaId, 'SUCCESS', `Correlated incident ${inc.id}`);
     return res.status(201).json({ id: rcaId, ...result });
   });
@@ -1848,6 +1904,7 @@ export function createApiRouter(
       return res.status(403).json({ error: 'Facility access denied for this RCA investigation.' });
     }
 
+    const rcaStatus = outcomeVerification?.trim() ? 'VERIFIED' : 'REVIEWED';
     db.prepare(`
       UPDATE root_cause_investigations
       SET human_decision = ?, resolution_record = ?, outcome_verification = ?, status = ?
@@ -1856,13 +1913,21 @@ export function createApiRouter(
       dec,
       rec,
       cleanString(outcomeVerification, 3, 400) || 'Verified operational stability post-mitigation.',
-      outcomeVerification?.trim() ? 'VERIFIED' : 'REVIEWED',
+      rcaStatus,
       req.params.id,
       req.auth!.tenantId
     );
 
+    if (rcaStatus === 'VERIFIED') {
+      db.prepare(`
+        UPDATE evidence_provenance
+        SET data_quality_status = 'VERIFIED'
+        WHERE tenant_id = ? AND source_module IN ('RCA', 'ROOT_CAUSE') AND source_record_id = ?
+      `).run(req.auth!.tenantId, req.params.id);
+    }
+
     logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'RCA_RESOLVED', 'ROOT_CAUSE', String(req.params.id), 'SUCCESS', dec);
-    return res.json({ ok: true });
+    return res.json({ ok: true, status: rcaStatus });
   });
 
   // --- Human-in-the-Loop Approvals & Work Orders ---
@@ -1993,9 +2058,10 @@ export function createApiRouter(
       assetId: wo.asset_id,
       sourceModule: 'WORKFLOW',
       sourceRecordId: wo.id,
-      dataMode: 'MEASURED',
+      dataMode: 'SYSTEM_RECORDED',
       evidenceClass: 'SYSTEM_RECORDED',
-      dataQualityStatus: 'VERIFIED',
+      dataQualityStatus: 'VALIDATED',
+      isIndependentlyVerified: false,
       relationshipType: 'DERIVED_FROM',
       parentEvidenceId: wo.id,
       processingMethod: 'Field Execution Dispatch Recorded (Workflow Record Only — Not Direct Equipment Control)',
@@ -2172,9 +2238,10 @@ export function createApiRouter(
       assetId: wo.asset_id,
       sourceModule: 'WORKFLOW',
       sourceRecordId: wo.id,
-      dataMode: 'MEASURED',
+      dataMode: 'HUMAN_REPORTED',
       evidenceClass: 'HUMAN_REPORTED',
-      dataQualityStatus: 'VERIFIED',
+      dataQualityStatus: verificationStatus === 'VERIFIED' ? 'VERIFIED' : 'PENDING_VERIFICATION',
+      isIndependentlyVerified: verificationStatus === 'VERIFIED',
       relationshipType: verificationStatus === 'VERIFIED' ? 'VERIFIES' : 'REQUIRES_REVIEW',
       parentEvidenceId: wo.id,
       processingMethod: `Human Post-Action Verification (${verificationStatus} -> ${nextStatus})`,
@@ -2283,9 +2350,10 @@ export function createApiRouter(
       assetId,
       sourceModule: 'INCIDENTS',
       sourceRecordId: id,
-      dataMode: 'MEASURED',
+      dataMode: 'HUMAN_REPORTED',
       evidenceClass: 'HUMAN_REPORTED',
-      dataQualityStatus: 'VERIFIED',
+      dataQualityStatus: 'PENDING_VERIFICATION',
+      isIndependentlyVerified: false,
       relationshipType: 'REQUIRES_REVIEW',
       parentEvidenceId: assetId,
       processingMethod: 'Operator Incident Escalation (Human-Reported Operational Observation)',
@@ -2316,6 +2384,11 @@ export function createApiRouter(
       inc.id,
       req.auth!.tenantId
     );
+    db.prepare(`
+      UPDATE evidence_provenance
+      SET data_quality_status = ?
+      WHERE tenant_id = ? AND source_module = 'INCIDENTS' AND source_record_id = ?
+    `).run(rawStatus === 'RESOLVED' ? 'VERIFIED' : 'PENDING_VERIFICATION', req.auth!.tenantId, inc.id);
     logAudit(req.auth!.tenantId, req.auth!.email, req.auth!.role, 'INCIDENT_STATUS_UPDATED', 'INCIDENT', inc.id, 'SUCCESS', `Status -> ${rawStatus}`);
     return res.json({ ok: true, status: rawStatus });
   });

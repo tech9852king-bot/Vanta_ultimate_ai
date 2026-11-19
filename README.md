@@ -1,13 +1,13 @@
 # VANTA AI — Universal Infrastructure Intelligence & Operations Platform
 
-> **V6 Enterprise Forensic & Verified Evolution Release (`v6.0.0`)**  
-> **Architecture**: Node.js (`v22.x`) + Express + SQLite (`node:sqlite` WAL Mode, Foreign Keys, Migrations `001`–`007`) + React 19 + TypeScript + Tailwind CSS 4 + `@google/genai` (`gemini-4-hydrogen`)  
+> **V7 Phase 2 Complete Reliability Recovery & Functional Release (`v7.0.0`)**  
+> **Architecture**: Node.js (`v22.x`) + Express + SQLite (`node:sqlite` WAL Mode, Foreign Keys, Migrations `001`–`009`) + React 19 + TypeScript + Tailwind CSS 4 + `@google/genai` (`gemini-4-hydrogen`)  
 > **Operating Standard**: Backup-First • Zero-Regression • Evidence-First • Fail-Closed Multi-Tenant & Facility RBAC
 
 ---
 
 ## 1. Executive Summary
-**VANTA AI** (`v6.0.0`) is a Universal Infrastructure Intelligence & Operations Platform that connects industrial assets, telemetry streams, computer-vision inspections, asset dependency graphs, digital twin snapshots, predictive maintenance models, engineering SOPs, and human-governed operational workflows into a single evidence-backed operating environment.
+**VANTA AI** (`v7.0.0`) is a Universal Infrastructure Intelligence & Operations Platform that connects industrial assets, telemetry streams, computer-vision inspections, asset dependency graphs, digital twin snapshots, predictive maintenance models, engineering SOPs, and human-governed operational workflows into a single evidence-backed operating environment.
 
 ## 2. Product Vision & Scope
 Instead of forcing operators to interpret disconnected dashboards or unverified AI summaries, VANTA AI enforces an **11-Stage Operational Intelligence Loop**:
@@ -20,14 +20,14 @@ Every analytical claim, root-cause hypothesis, energy total, and maintenance rec
 | :--- | :--- | :--- |
 | **Desktop & Mobile Command Shell (`src/App.tsx`)** | `VERIFIED_IMPLEMENTED` | Stationary top header (`h-14 shrink-0`), stationary left sidebar (`lg:h-full overflow-hidden`) with independent `<nav>` scroll (`min-h-0 overflow-y-auto overscroll-contain`), independent `<main>` scroll container, and responsive mobile drawer. |
 | **Multi-Tenant & Facility-Scoped RBAC + Scrypt Auth** | `VERIFIED_IMPLEMENTED` | Scrypt password hashing, HMAC-SHA256 JWTs backed by SQLite `session_records` JTI revocation (`logout` & `revoke-all`), and `authorizeFacilityScope` on all reads/mutations. |
-| **VANTA Brain 13-Stage Investigation Engine (`src/server/ai.ts`)** | `VERIFIED_IMPLEMENTED` | Live `gemini-4-hydrogen` structured synthesis (`maxOutputTokens: 4096`, `15,000ms` per-attempt timeout, `AbortSignal` propagation, bounded retry on `429`/`503`), size-aware JSON context builder (`buildSizeAwareEvidencePayload`), server-side citation validator (`validateBrainCitations`), 4-step live provider verification (`POST /api/brain/verify-provider`), and deterministic fallback (`DETERMINISTIC_CORE_FALLBACK`). |
-| **Evidence & Provenance Engine (`evidence_provenance`)** | `VERIFIED_IMPLEMENTED` | Migrations `006` & `007` populate and track 9 evidence classes and 7 relationship types with automatic WAL passive checkpointing on startup and Brain runs. |
+| **VANTA Brain 13-Stage Investigation Engine (`src/server/ai.ts`)** | `VERIFIED_IMPLEMENTED` | Live `gemini-4-hydrogen` structured synthesis (`maxOutputTokens: 4096`, `15,000ms` per-attempt timeout, `AbortSignal` & client-disconnect cancellation, in-flight duplicate query coalescing, bounded retry on `429`/`503`), authoritative 9-category evidence counter (`countEvidenceByClassification`), size-aware JSON context builder (`buildSizeAwareEvidencePayload`), server-side citation validator (`validateBrainCitations`), 4-step live provider verification (`POST /api/brain/verify-provider`), and deterministic fallback (`DETERMINISTIC_CORE_FALLBACK`). |
+| **Evidence & Provenance Engine (`evidence_provenance`)** | `VERIFIED_IMPLEMENTED` | Migrations `006`, `007`, `008`, and `009` enforce centralized provenance validation (`validateProvenanceCombination` & `resolveCanonicalProvenance`) across all 9 canonical classes (`MEASURED`, `OBSERVED`, `HUMAN_REPORTED`, `SYSTEM_RECORDED`, `ESTIMATED`, `INFERRED`, `PREDICTED`, `SIMULATED`, `UNKNOWN`) and audited `data_quality_status` (`VERIFIED`, `VALIDATED`, `PENDING_VERIFICATION`, `SIMULATED_SYNTHETIC`) with zero contradictory `(data_mode, evidence_class)` pairs. |
 | **Closed-Loop Work-Order State Machine (`validateWorkOrderTransition`)** | `VERIFIED_IMPLEMENTED` | Enforces `CREATED → PENDING_APPROVAL → APPROVED → IN_PROGRESS → VERIFICATION_PENDING → COMPLETED / NEEDS_FOLLOW_UP / UNRESOLVED / CANCELLED` with transactional SQLite idempotency (`idx_maint_work_order_unique`). |
 | **Asset 360° Intelligence & Directed Dependency Graph** | `VERIFIED_IMPLEMENTED` | Directed edges (`POWERS`, `COOLS`, `FEEDS`, `MONITORS`) across Manufacturing, Grid Substation, Data Center, Warehouse, and Healthcare facilities. |
 | **Digital Twin Snapshots & BFS Cascade Simulation** | `VERIFIED_IMPLEMENTED` | Persists `digital_twin_snapshots` and runs read-only BFS cascade propagation (`simulateTwinCascade`, explicitly labeled `SIMULATED`). |
-| **Root Cause Analysis Engine (`correlateRootCauseEvidence`)** | `VERIFIED_IMPLEMENTED` | Correlates incident timestamps, upstream asset anomalies, and dependency graph weights with explicit correlation-vs-causation disclosure. |
+| **Root Cause Analysis Engine (`correlateRootCauseEvidence`)** | `VERIFIED_IMPLEMENTED` | Correlates incident timestamps, upstream asset anomalies, and dependency graph weights (`dataMode: 'INFERRED'`, `evidenceClass: 'INFERRED'`, `dataQualityStatus: 'PENDING_VERIFICATION'` until human-verified) with explicit correlation-vs-causation disclosure. |
 | **Bounded Multi-Agent Orchestrator (12 Specialized Agents)** | `VERIFIED_IMPLEMENTED` | Enforces per-agent tool allowlists, step budgets, safety interlock blocks (`BLOCKED_SAFETY`), and `idempotencyKey` deduplication. |
-| **Multimodal Vision Inspection (`POST /api/vision/upload-inspect`)** | `VERIFIED_IMPLEMENTED` | Accepts operator-uploaded PNG/JPEG/WebP frames (`captureSource: 'UPLOADED_IMAGE'`, `mode: 'MEASURED'`), with rule-based edge fallback when `GEMINI_API_KEY` is unset. |
+| **Multimodal Vision Inspection (`POST /api/vision/upload-inspect`)** | `VERIFIED_IMPLEMENTED` | Accepts operator-uploaded PNG/JPEG/WebP frames (`captureSource: 'UPLOADED_IMAGE'`, `mode: 'OBSERVED'`, `dataMode: 'OBSERVED'`, `evidenceClass: 'OBSERVED'`, `dataQualityStatus: 'PENDING_VERIFICATION'`), preserving real camera status without faking `LIVE` stream state or `MEASURED` sensor telemetry. |
 | **SQLite WAL Hot Backup, SHA-256 Verification & Restore** | `VERIFIED_IMPLEMENTED` | `VACUUM INTO` hot backups in `.vanta-data/backups/` with companion `.sha256.json` manifests (`backupType`, `schemaVersion`), tamper detection, and verified restoration (`restoreDatabaseFromBackup`). |
 | **Industrial IoT Protocol Normalizer (`iot_integrations`)** | `SIMULATED` | 10-stage connector lifecycle (`REGISTER` through `DISCONNECT`) and 2-second duplicate telemetry guard are `VERIFIED_IMPLEMENTED`; `.internal` plant brokers run in `SIMULATED` mode in the cloud sandbox. |
 | **Static Sample Camera Buffer Inspection (`cam-14`, `cam-12`, `cam-c4`)** | `SIMULATED` | Inspects curated industrial sample frames (`capabilityState: 'SAMPLE_IMAGE'`, `mode: 'SIMULATED'`). |
@@ -57,7 +57,7 @@ Every analytical claim, root-cause hypothesis, energy total, and maintenance rec
 | Layer | Technology | Version | Purpose |
 | :--- | :--- | :--- | :--- |
 | **Runtime** | Node.js (`node:sqlite` & `node:test`) | `v22.23.2` | Server runtime, native SQLite WAL engine, and test runner |
-| **Package Manager / Lockfile** | Bun (`bun.lock`) & npm (`.npmrc`) | Bun `1.4.4` | Deterministic dependency resolution (`bun install --frozen-lockfile`) |
+| **Package Manager / Lockfile** | npm (`package-lock.json`) & Bun (`bun.lock`) | npm `10.x` / Bun `1.4.4` | Deterministic dependency resolution (`npm ci` / `npm install` or `bun install --frozen-lockfile`) |
 | **Backend HTTP** | Express | `^4.21.2` | REST API, HTTP-only cookies, SSE telemetry stream, static serving |
 | **AI SDK** | `@google/genai` | `^2.4.0` | Server-side Gemini structured synthesis & multimodal vision (`gemini-4-hydrogen`) |
 | **Frontend UI** | React + React DOM | `^19.0.1` | 20-module enterprise command center SPA |
@@ -70,11 +70,12 @@ Every analytical claim, root-cause hypothesis, energy total, and maintenance rec
 ├── .env.example                 # Documented environment variable template (no secrets)
 ├── .npmrc                       # npm peer-dependency compatibility (legacy-peer-deps=true)
 ├── ARCHITECTURE.md              # Deep architectural, schema, state-machine & security reference
-├── README.md                    # Primary enterprise engineering & operations manual (V6)
-├── bun.lock                     # Deterministic lockfile (69,431 bytes; verified via bun install --frozen-lockfile)
+├── README.md                    # Primary enterprise engineering & operations manual
+├── bun.lock                     # Deterministic Bun lockfile (verified via bun install --frozen-lockfile)
+├── package-lock.json            # Deterministic npm v3 lockfile for standard npm / CI workflows
 ├── index.html                   # SPA HTML entry point
 ├── metadata.json                # Applet metadata & capability declarations
-├── package.json                 # Version 6.0.0 scripts (dev, build, start, lint, test) and dependencies
+├── package.json                 # Scripts (dev, build, start, lint, test) and dependencies
 ├── server.ts                    # Express server entry point (API + Vite middleware / static dist)
 ├── tsconfig.json                # TypeScript compiler configuration
 ├── vite.config.ts               # Vite bundler configuration
@@ -92,15 +93,15 @@ Every analytical claim, root-cause hypothesis, energy total, and maintenance rec
 
 ## 7. Prerequisites
 - **Node.js** `>= 22.0.0` (required for built-in `node:sqlite` and `node:test`)
-- **Bun** `>= 1.1.0` (recommended for deterministic lockfile verification) or **npm** `>= 10.0.0`
+- **npm** `>= 10.0.0` (`package-lock.json`) or **Bun** `>= 1.1.0` (`bun.lock`)
 
 ## 8. Reproducible Installation Guide
 ```bash
-# Deterministic installation from committed bun.lock (69,431 bytes):
-bun install --frozen-lockfile
-
-# Or standard npm installation (uses .npmrc legacy-peer-deps=true):
+# Standard npm installation using committed package-lock.json + .npmrc:
 npm install
+
+# Or Bun deterministic installation from committed bun.lock:
+bun install --frozen-lockfile
 ```
 
 ## 9. Environment Variables & Configuration Matrix
@@ -125,7 +126,7 @@ npm start        # Run production server
 npm test         # Execute full unit + integration test suite (src/core/*.test.ts src/server/*.test.ts)
 ```
 
-## 11. Database Architecture & Schema Migrations (`001`–`007`)
+## 11. Database Architecture & Schema Migrations (`001`–`009`)
 VANTA AI uses **SQLite in WAL (`Write-Ahead Logging`) mode** (`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`) and executes `PRAGMA wal_checkpoint(PASSIVE);` after startup migrations and `brain_runs` writes so single-file reads of `.vanta-data/vanta.db` always observe committed state:
 1. **`001_initial_vanta_os`**: Creates 26 core multi-tenant tables.
 2. **`002_phase2_zero_trust_provenance`**: Adds `users.status`, `users.token_version`, `telemetry_points.facility_id`, camera capability states, `iot_integrations.credential_ref`, and `agent_executions.idempotency_key`.
@@ -134,6 +135,8 @@ VANTA AI uses **SQLite in WAL (`Write-Ahead Logging`) mode** (`PRAGMA journal_mo
 5. **`005_repair_legacy_verification_and_state_machine`**: Reclassifies historical auto-migrated work orders with synthetic verification text to `LEGACY_UNVERIFIED` and adds `idx_maint_work_order_unique`.
 6. **`006_evidence_engine_and_connector_lifecycle`**: Adds 9-class `evidence_class`, `data_quality_status`, `relationship_type`, and `parent_evidence_id` to `evidence_provenance`, plus 10-stage `lifecycle_stage` to `iot_integrations`.
 7. **`007_v4_brain_observability_and_provenance`**: Adds `correlation_id`, `execution_status`, `provider_status`, `failure_category`, `tool_results_json`, and `omitted_evidence_count` to `brain_runs`, and backfills 13 baseline `evidence_provenance` rows from seeded telemetry, vision, incident, predictive, and root-cause records.
+8. **`008_repair_provenance_and_vision_classification`**: Eliminates contradictory `(data_mode, evidence_class)` pairs in `evidence_provenance` (`MEASURED + HUMAN_REPORTED` → `HUMAN_REPORTED + HUMAN_REPORTED`, `MEASURED + PREDICTED` → `PREDICTED + PREDICTED`, `MEASURED + INFERRED` → `INFERRED + INFERRED`, `SIMULATED + OBSERVED` sample buffer → `SIMULATED + SIMULATED`, `MEASURED + OBSERVED` uploaded image → `OBSERVED + OBSERVED`).
+9. **`009_audit_provenance_data_quality_and_vision_mode`**: Repairs `vision_events.mode` for `UPLOADED_IMAGE` captures from `'MEASURED'` to `'OBSERVED'` and audits `evidence_provenance.data_quality_status` so `VERIFIED` is reserved strictly for direct `MEASURED` sensor readings and independently verified outcomes (`RESOLVED` incidents, `VERIFIED` RCA investigations, `VERIFIED` post-action work orders), while unverified human reports, correlation hypotheses, heuristic RUL projections, and uploaded frames are marked `PENDING_VERIFICATION`, system dispatch logs are marked `VALIDATED`, and simulated records are marked `SIMULATED_SYNTHETIC`.
 
 ## 12. V5-to-V6 Database Lineage & Provenance Explanation
 Forensic inspection of `.vanta-data/` and `.vanta-data/backups/` established the exact lineage across versions:
@@ -159,10 +162,10 @@ Every `POST /api/brain/query` request runs a 13-stage pipeline (`Intent Parsing 
 - **Deterministic Fallback (`DETERMINISTIC_CORE_FALLBACK`)**: Triggered transparently if `GEMINI_API_KEY` is unset or on provider error (`TIMEOUT`, `RATE_LIMITED`, `QUOTA_EXCEEDED`, `AUTH_ERROR`, `PERMISSION_ERROR`, `INVALID_MODEL`, `MALFORMED_OUTPUT`, `ABORTED`).
 
 ## 15. Evidence & Provenance Architecture
-Every record in `evidence_provenance` carries a 9-category `evidence_class` (`MEASURED`, `OBSERVED`, `HUMAN_REPORTED`, `SYSTEM_RECORDED`, `ESTIMATED`, `INFERRED`, `PREDICTED`, `SIMULATED`, `UNKNOWN`), a 7-type `relationship_type` (`SUPPORTS`, `CONTRADICTS`, `DERIVED_FROM`, `CORRELATES_WITH`, `VERIFIES`, `SUPERSEDES`, `REQUIRES_REVIEW`), and `data_quality_status`. Server-side `validateBrainCitations` strips any citation not found in the facility-authorized `EvidenceIndex` and prefixes `[SIMULATED]` or `[ESTIMATED]` claims automatically.
+Every record in `evidence_provenance` carries a validated 9-category `(data_mode, evidence_class)` pair (`MEASURED`, `OBSERVED`, `HUMAN_REPORTED`, `SYSTEM_RECORDED`, `ESTIMATED`, `INFERRED`, `PREDICTED`, `SIMULATED`, `UNKNOWN`), a 7-type `relationship_type` (`SUPPORTS`, `CONTRADICTS`, `DERIVED_FROM`, `CORRELATES_WITH`, `VERIFIES`, `SUPERSEDES`, `REQUIRES_REVIEW`), and `data_quality_status`. Centralized `validateProvenanceCombination` and `resolveCanonicalProvenance` (`src/core/intelligence.ts`) reject contradictory pairs (`MEASURED + HUMAN_REPORTED`, `MEASURED + INFERRED`, `MEASURED + PREDICTED`, `SIMULATED + OBSERVED`, `MEASURED + OBSERVED`). Server-side `validateBrainCitations` strips any citation not found in the facility-authorized `EvidenceIndex` and prefixes non-measured claims (`[SIMULATED]`, `[ESTIMATED]`, `[PREDICTED]`, `[INFERRED]`, `[HUMAN_REPORTED]`, `[OBSERVED]`, `[SYSTEM_RECORDED]`) automatically.
 
 ## 16. Vision Intelligence & Camera Management
-Supports sample-buffer inspection (`cam-14`, `cam-12`, `cam-c4` — labeled `SAMPLE_IMAGE` / `SIMULATED`), fail-closed offline RTSP detection (`cam-a30` — returns `409 Conflict` on live grab), and operator-uploaded frame inspection (`POST /api/vision/upload-inspect` — `captureSource: 'UPLOADED_IMAGE'`, `mode: 'MEASURED'`).
+Supports sample-buffer inspection (`cam-14`, `cam-12`, `cam-c4` — labeled `SAMPLE_IMAGE`, provenance `SIMULATED + SIMULATED`), fail-closed offline RTSP detection (`cam-a30` — returns `409 Conflict` on live grab), and operator-uploaded frame inspection (`POST /api/vision/upload-inspect` — `captureSource: 'UPLOADED_IMAGE'`, provenance `OBSERVED + OBSERVED`, preserving actual camera status without claiming a live RTSP stream).
 
 ## 17. Infrastructure Hierarchy & Asset Graph
 Models `Organization → Site → Facility → BuildingZone → Asset → Equipment/Sensor` with directed dependency edges (`POWERS`, `COOLS`, `FEEDS`, `MONITORS`) and criticality weights (`0.0`–`1.0`).
@@ -212,7 +215,7 @@ Exposes correlation-tracked structured telemetry (`X-Correlation-Id`), request/A
 - **Restoration**: Call `restoreDatabaseFromBackup(backupFilePath, targetDbPath)` in `src/server/backup.ts`.
 
 ## 30. Automated Testing Guide
-Execute `npm test` to run all 23 automated test suites across `src/core/intelligence.test.ts` (16 unit tests) and `src/server/phase2.test.ts` (7 comprehensive integration suites including the 30-case VANTA Brain & Provider Verification matrix).
+Execute `npm test` to run all 27 automated test suites across `src/core/intelligence.test.ts` (16 unit tests), `src/server/security.test.ts` (3 security suites), `src/server/api.test.ts` (1 API integration suite), and `src/server/phase2.test.ts` (7 comprehensive integration suites including the 30-case VANTA Brain & Provider Verification matrix).
 
 ## 31. API Reference
 
@@ -229,7 +232,7 @@ Execute `npm test` to run all 23 automated test suites across `src/core/intellig
 | `POST /api/brain/query` | `QUERY_BRAIN` | 13-stage VANTA Brain analysis with citation validation & WAL checkpoint |
 | `POST /api/brain/verify-provider` | `QUERY_BRAIN` | 4-step live Gemini provider & structured synthesis readiness check |
 | `POST /api/vision/inspect` | `RUN_VISION_INSPECT` | Camera frame inspection (`409` if `OFFLINE`) |
-| `POST /api/vision/upload-inspect` | `RUN_VISION_INSPECT` | Operator-uploaded multimodal frame inspection (`MEASURED`) |
+| `POST /api/vision/upload-inspect` | `RUN_VISION_INSPECT` | Operator-uploaded multimodal frame inspection (`OBSERVED` / `UPLOADED_IMAGE`, `PENDING_VERIFICATION`) |
 | `POST /api/iot/connectors/:id/health-check` | `VIEW_PLATFORM` | Connector health probe & 10-stage lifecycle update |
 | `POST /api/iot/ingest` | `MANAGE_ASSETS_IOT` | Telemetry ingestion with 2s duplicate guard |
 | `POST /api/twin/snapshots` | `RUN_TWIN_SIMULATION` | Captures Digital Twin snapshot |
@@ -268,9 +271,11 @@ Never commit real API keys or session secrets to `.env` or source control. In `N
 - **V5**: Forensic stabilization, lockfile verification (`bun.lock`), and 28-case Brain test matrix.
 - **V6 (`v6.0.0`)**: Resolved `gemini-4-hydrogen` thinking-token output truncation (`maxOutputTokens: 4096`) and timeout budget (`15,000ms`), added `POST /api/brain/verify-provider` 4-step live verification, checkpointed WAL state into `vanta.db` with automatic passive checkpoints, repaired all historical backup `.sha256.json` manifests, and reconciled all documentation.
 
+- **V7 (`v7.0.0`)**: Repaired all contradictory `(data_mode, evidence_class)` pairs in `evidence_provenance` via migration `008_repair_provenance_and_vision_classification`, added migration `009_audit_provenance_data_quality_and_vision_mode` to audit `data_quality_status` (`VERIFIED` vs `VALIDATED` vs `PENDING_VERIFICATION` vs `SIMULATED_SYNTHETIC`) and align uploaded vision events (`mode: 'OBSERVED'`), enforced centralized 9-category evidence counting (`countEvidenceByClassification`) so `MEASURED` counts only `MEASURED`, added in-flight Brain query deduplication and disconnect abort handling, and committed `package-lock.json` alongside `bun.lock`.
+
 ## 37. Production Readiness Checklist
 - [x] `VANTA_SESSION_SECRET` configured (`>= 32` chars) in production
 - [x] `GEMINI_API_KEY` verified live with `gemini-4-hydrogen` (`GEMINI_SUCCESS`)
-- [x] All 7 SQLite migrations (`001`–`007`) and 13 baseline provenance records checkpointed in `.vanta-data/vanta.db`
-- [x] All 5 `.vanta-data/backups/*.db` snapshots verified (`integrityCheck: ok`, `sha256Match: true`)
-- [x] `bun install --frozen-lockfile`, `npm run lint`, `npm run build`, and `npm test` passing (`0` failures)
+- [x] All 9 SQLite migrations (`001`–`009`) and consistent baseline provenance records checkpointed in `.vanta-data/vanta.db`
+- [x] All `.vanta-data/backups/*.db` snapshots verified (`integrityCheck: ok`, `sha256Match: true`)
+- [x] `package-lock.json` and `bun.lock` committed and verified (`npm install`, `npm run lint`, `npm run build`, and `npm test` passing with `0` failures)

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -60,6 +60,56 @@ import type { SystemHealthStatus, WorkspaceData } from './types/workspace';
 interface NavGroup {
   label: string;
   items: Array<{ id: NavigationSection; label: string; icon: React.ComponentType<{ className?: string }> }>;
+}
+
+class WorkspaceErrorBoundary extends React.Component<
+  { activeSection: string; onReset: () => void; children: React.ReactNode },
+  { hasError: boolean; errorMessage: string | null }
+> {
+  constructor(props: { activeSection: string; onReset: () => void; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: null };
+  }
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      errorMessage: error instanceof Error ? error.message : 'Unexpected module render error.',
+    };
+  }
+
+  componentDidUpdate(prevProps: { activeSection: string }) {
+    if (prevProps.activeSection !== this.props.activeSection && this.state.hasError) {
+      this.setState({ hasError: false, errorMessage: null });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="alert"
+          className="bg-[#111827] border border-rose-800/80 rounded-lg p-6 space-y-3 text-xs text-slate-200"
+        >
+          <div className="font-mono text-rose-400 font-semibold">
+            MODULE RENDER FAULT ISOLATED ({this.props.activeSection})
+          </div>
+          <p className="text-slate-300">{this.state.errorMessage}</p>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, errorMessage: null });
+              this.props.onReset();
+            }}
+            className="px-3.5 py-2 rounded-md bg-sky-600 hover:bg-sky-500 text-xs font-medium text-white"
+          >
+            Reload Workspace Context
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 const NAV_GROUPS: NavGroup[] = [
@@ -128,7 +178,10 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  const workspaceReqIdRef = useRef(0);
+
   const loadWorkspace = useCallback(async (facilityId: string) => {
+    const reqId = ++workspaceReqIdRef.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -136,9 +189,11 @@ export default function App() {
         vantaApi.getWorkspace(facilityId),
         vantaApi.getHealth(),
       ]);
+      if (reqId !== workspaceReqIdRef.current) return;
       setWorkspace(ws);
       setHealth(sysHealth);
     } catch (err) {
+      if (reqId !== workspaceReqIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to load workspace.';
       if (message.toLowerCase().includes('authentication required') || message.includes('401') || message.toLowerCase().includes('suspended')) {
         setUser(null);
@@ -146,7 +201,9 @@ export default function App() {
       }
       setLoadError(message);
     } finally {
-      setLoading(false);
+      if (reqId === workspaceReqIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -221,11 +278,17 @@ export default function App() {
   }, [user, selectedFacilityId, loadWorkspace]);
 
   const handleLogout = async () => {
-    await vantaApi.logout();
-    setUser(null);
-    setWorkspace(null);
-    setSelectedFacilityId('ALL');
-    setActiveSection('overview');
+    try {
+      await vantaApi.logout();
+    } catch {
+      // Always clear client session state even if network call fails
+    } finally {
+      workspaceReqIdRef.current += 1;
+      setUser(null);
+      setWorkspace(null);
+      setSelectedFacilityId('ALL');
+      setActiveSection('overview');
+    }
   };
 
   if (!authChecked) {
@@ -516,7 +579,14 @@ export default function App() {
         </header>
 
         <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-5 lg:p-8">
-          <div className="max-w-7xl mx-auto">{renderContent()}</div>
+          <div className="max-w-7xl mx-auto">
+            <WorkspaceErrorBoundary
+              activeSection={activeSection}
+              onReset={() => void loadWorkspace(selectedFacilityId)}
+            >
+              {renderContent()}
+            </WorkspaceErrorBoundary>
+          </div>
         </main>
       </div>
     </div>
